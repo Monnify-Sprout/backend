@@ -57,3 +57,41 @@ Content-Type: application/json
   "id_type": "NIN",
   "id_number": "22212340000"
 }
+
+### Create a Dynamic Invoice (merchant must be verified/active)
+# @name invoice
+POST {{base}}/api/invoices
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "customer_name": "Chidi Buyer",
+  "description": "Order #42",
+  "amount": 15000,
+  "due_date": "2026-12-31"
+}
+
+### List my invoices
+GET {{base}}/api/invoices
+Authorization: Bearer {{token}}
+
+### Get one invoice + its payment/settlement
+GET {{base}}/api/invoices/{{invoice.response.body.invoice.id}}
+Authorization: Bearer {{token}}
+
+### Monnify collection webhook (no auth; HMAC-SHA512 of the RAW body in the
+### monnify-signature header, keyed by MONNIFY_WEBHOOK_SECRET). The signature
+### can't be hardcoded here — `npm run smoke` exercises this end to end.
+POST {{base}}/api/webhooks/monnify
+Content-Type: application/json
+monnify-signature: <hex hmac-sha512 of the body>
+
+{
+  "eventType": "SUCCESSFUL_TRANSACTION",
+  "eventData": {
+    "transactionReference": "<from invoice response>",
+    "paymentReference": "PAYREF-001",
+    "paymentStatus": "PAID",
+    "product": { "reference": "<invoice_reference>" }
+  }
+}

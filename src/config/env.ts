@@ -31,6 +31,21 @@ const envSchema = z.object({
   MONNIFY_API_KEY: z.string().optional(),
   MONNIFY_SECRET_KEY: z.string().optional(),
   MONNIFY_CONTRACT_CODE: z.string().optional(),
+
+  // Phase 3 — invoices, webhook, settlement.
+  // Shared secret Monnify signs collection webhooks with (HMAC-SHA512). Required
+  // to accept webhooks; the mock/demo signs with this same value.
+  MONNIFY_WEBHOOK_SECRET: z.string().optional(),
+  // Sprout's platform commission as a percentage of each invoice (a Sprout
+  // business decision, not a Monnify fee). PRD §7.3.
+  SPROUT_COMMISSION_PERCENT: z.coerce.number().min(0).max(100).default(1),
+  // Whether Monnify's Create Invoice accepts incomeSplitConfig (UNCONFIRMED —
+  // PRD §7.3). 'true' → apply the split at settlement; 'false' → safe manual
+  // fallback (100% to merchant, Sprout's cut as a separate transfer).
+  MONNIFY_INVOICE_SPLIT_SUPPORTED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
 });
 
 const parsed = envSchema.safeParse(process.env);

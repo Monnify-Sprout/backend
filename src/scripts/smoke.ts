@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { createHmac } from 'node:crypto';
 
 // End-to-end proof for Phase 1: register -> login -> access a protected route,
 // and confirm a freshly registered merchant is NOT active.
@@ -22,6 +23,37 @@ interface RegisterResponse {
 interface LoginResponse {
   token?: string;
   merchant?: MerchantView;
+}
+interface InvoiceView {
+  id?: string;
+  status?: string;
+  invoice_reference?: string | null;
+  virtual_account_number?: string | null;
+  checkout_url?: string | null;
+  monnify_transaction_reference?: string | null;
+  settlement_path?: string | null;
+  amount?: string;
+}
+interface PaymentView {
+  settlement_amount?: string | null;
+  commission_amount?: string | null;
+}
+interface InvoiceCreateResponse {
+  invoice?: InvoiceView;
+  settlement?: {
+    path?: string;
+    commission_amount?: number;
+    settlement_amount?: number;
+    commission_percent?: number;
+  };
+}
+interface InvoiceDetailResponse {
+  invoice?: InvoiceView;
+  payment?: PaymentView | null;
+}
+interface WebhookAck {
+  received?: boolean;
+  outcome?: string;
 }
 
 // Node's fetch types `.json()` as unknown; parse into a known shape.
@@ -238,6 +270,122 @@ async function main(): Promise<void> {
     'failed merchant has no sub_account_code',
     !verifyFailBody.merchant?.sub_account_code,
   );
+
+  // ── Phase 3: invoices, webhook, settlement (mock mode) ─────────────────────
+
+  // 10. A non-active merchant cannot create invoices (token2 = onboarding)
+  const invForbidden = await fetch(`${BASE}/api/invoices`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token2}` },
+    body: JSON.stringify({ customer_name: 'Blocked', amount: 5000 }),
+  });
+  check('non-active merchant cannot create invoice (403)', invForbidden.status === 403, invForbidden.status);
+
+  // 11. Active merchant creates a Dynamic Invoice
+  const invAmount = 15000;
+  const createInv = await fetch(`${BASE}/api/invoices`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({
+      customer_name: 'Chidi Buyer',
+      description: 'Order #42',
+      amount: invAmount,
+      due_date: '2026-12-31',
+    }),
+  });
+  const createInvBody = await readBody<InvoiceCreateResponse>(createInv);
+  const invoice = createInvBody.invoice;
+  check('invoice creation returns 201', createInv.status === 201, createInv.status);
+  check('invoice status is "pending"', invoice?.status === 'pending', invoice?.status);
+  check(
+    'invoice has a virtual account number',
+    typeof invoice?.virtual_account_number === 'string' &&
+      invoice.virtual_account_number.length > 0,
+    invoice?.virtual_account_number,
+  );
+  check(
+    'invoice has a checkout url',
+    typeof invoice?.checkout_url === 'string' && invoice.checkout_url.length > 0,
+  );
+  check(
+    'invoice records a settlement path',
+    invoice?.settlement_path === 'manual' || invoice?.settlement_path === 'split',
+    invoice?.settlement_path,
+  );
+  check(
+    'settlement split is computed (merchant < total)',
+    typeof createInvBody.settlement?.settlement_amount === 'number' &&
+      createInvBody.settlement.settlement_amount < invAmount,
+    createInvBody.settlement,
+  );
+
+  const txnRef = invoice?.monnify_transaction_reference ?? '';
+  const invId = invoice?.id ?? '';
+  const secret = process.env.MONNIFY_WEBHOOK_SECRET ?? '';
+  const webhookBody = JSON.stringify({
+    eventType: 'SUCCESSFUL_TRANSACTION',
+    eventData: {
+      transactionReference: txnRef,
+      paymentReference: `PAYREF-${stamp}`,
+      paymentStatus: 'PAID',
+      product: { reference: invoice?.invoice_reference },
+    },
+  });
+
+  // 12. Webhook with a bad signature is rejected
+  const badSig = await fetch(`${BASE}/api/webhooks/monnify`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'monnify-signature': 'deadbeef' },
+    body: webhookBody,
+  });
+  check('webhook rejects bad signature (401)', badSig.status === 401, badSig.status);
+
+  // 13. Webhook with a valid signature → invoice paid
+  const goodSig = createHmac('sha512', secret).update(webhookBody).digest('hex');
+  const goodHook = await fetch(`${BASE}/api/webhooks/monnify`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'monnify-signature': goodSig },
+    body: webhookBody,
+  });
+  const goodHookBody = await readBody<WebhookAck>(goodHook);
+  check('valid webhook accepted (200)', goodHook.status === 200, goodHook.status);
+  check('webhook outcome is "processed"', goodHookBody.outcome === 'processed', goodHookBody.outcome);
+
+  // 14. Invoice now shows paid, with settlement + commission recorded
+  const paidInv = await readBody<InvoiceDetailResponse>(
+    await fetch(`${BASE}/api/invoices/${invId}`, {
+      headers: { authorization: `Bearer ${token}` },
+    }),
+  );
+  check('paid invoice status is "paid"', paidInv.invoice?.status === 'paid', paidInv.invoice?.status);
+  check(
+    'payment records settlement + commission',
+    paidInv.payment != null &&
+      paidInv.payment.settlement_amount != null &&
+      paidInv.payment.commission_amount != null,
+    paidInv.payment,
+  );
+
+  // 15. Replaying the same webhook is a no-op
+  const replay = await fetch(`${BASE}/api/webhooks/monnify`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'monnify-signature': goodSig },
+    body: webhookBody,
+  });
+  const replayBody = await readBody<WebhookAck>(replay);
+  check(
+    'replayed webhook is a no-op (duplicate)',
+    replay.status === 200 && replayBody.outcome === 'duplicate',
+    replayBody.outcome,
+  );
+
+  // 16. Invoice still paid after the replay
+  const afterReplay = await readBody<InvoiceDetailResponse>(
+    await fetch(`${BASE}/api/invoices/${invId}`, {
+      headers: { authorization: `Bearer ${token}` },
+    }),
+  );
+  check('invoice still paid after replay', afterReplay.invoice?.status === 'paid', afterReplay.invoice?.status);
 
   console.log(`\n${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);

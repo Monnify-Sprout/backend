@@ -2,11 +2,15 @@ import { env } from '../../config/env';
 import { HttpError } from '../../middleware/error';
 
 import type {
+  CreateInvoiceInput,
+  CreateInvoiceResult,
   CreateSubAccountInput,
   CreateSubAccountResult,
   MonnifyProvider,
+  TransactionStatus,
   VerifyIdentityInput,
   VerifyIdentityResult,
+  VerifyTransactionResult,
 } from './types';
 
 // Monnify wraps every response in this envelope.
@@ -22,6 +26,21 @@ interface AuthBody {
 }
 interface SubAccountBody {
   subAccountCode: string;
+}
+interface InvoiceBody {
+  invoiceReference: string;
+  transactionReference: string;
+  accountNumber?: string;
+  bankName?: string;
+  checkoutUrl: string;
+}
+interface TransactionBody {
+  transactionReference: string;
+  paymentStatus?: string;
+  amountPaid?: number | string;
+  currencyCode?: string;
+  paymentMethod?: string;
+  paidOn?: string;
 }
 
 // Real Monnify integration.
@@ -162,4 +181,109 @@ export class MonnifyLiveProvider implements MonnifyProvider {
     }
     return { subAccountCode: code };
   }
+
+  async createInvoice(
+    input: CreateInvoiceInput,
+  ): Promise<CreateInvoiceResult> {
+    const cfg = this.config();
+    const token = await this.authToken();
+    const body: Record<string, unknown> = {
+      amount: input.amount,
+      invoiceReference: input.invoiceReference,
+      description: input.description,
+      currencyCode: input.currency,
+      contractCode: cfg.contractCode,
+      customerEmail: input.customerEmail,
+      customerName: input.customerName,
+      expiryDate: toMonnifyExpiry(input.dueDate),
+      paymentMethods: ['ACCOUNT_TRANSFER', 'CARD'],
+    };
+    // Split path (PRD §7.3) — send only when we've confirmed Create Invoice
+    // accepts incomeSplitConfig.
+    if (input.incomeSplit) {
+      body.incomeSplitConfig = [
+        {
+          subAccountCode: input.incomeSplit.subAccountCode,
+          splitPercentage: input.incomeSplit.splitPercentage,
+          feeBearer: true,
+        },
+      ];
+    }
+    const res = await fetch(`${cfg.baseUrl}/api/v1/invoice/create`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+    const json = (await res.json()) as MonnifyEnvelope<InvoiceBody>;
+    const b = json.responseBody;
+    if (!res.ok || !json.requestSuccessful || !b?.transactionReference) {
+      throw new HttpError(
+        502,
+        `Monnify invoice creation failed: ${json.responseMessage ?? res.status}`,
+      );
+    }
+    return {
+      invoiceReference: b.invoiceReference,
+      transactionReference: b.transactionReference,
+      virtualAccountNumber: b.accountNumber ?? '',
+      virtualAccountBankName: b.bankName,
+      checkoutUrl: b.checkoutUrl,
+    };
+  }
+
+  async verifyTransaction(
+    transactionReference: string,
+  ): Promise<VerifyTransactionResult> {
+    const cfg = this.config();
+    const token = await this.authToken();
+    const url = `${cfg.baseUrl}/api/v2/merchant/transactions/query?transactionReference=${encodeURIComponent(
+      transactionReference,
+    )}`;
+    const res = await fetch(url, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const json = (await res.json()) as MonnifyEnvelope<TransactionBody>;
+    const b = json.responseBody;
+    if (!res.ok || !json.requestSuccessful || !b) {
+      return { transactionReference, status: 'UNKNOWN', amountPaid: 0 };
+    }
+    return {
+      transactionReference,
+      status: normaliseStatus(b.paymentStatus),
+      amountPaid: Number(b.amountPaid ?? 0),
+      currency: b.currencyCode,
+      paymentMethod: b.paymentMethod,
+      paidAt: b.paidOn,
+    };
+  }
+}
+
+function normaliseStatus(status: string | undefined): TransactionStatus {
+  switch (status) {
+    case 'PAID':
+      return 'PAID';
+    case 'PENDING':
+    case 'PARTIALLY_PAID':
+      return 'PENDING';
+    case 'FAILED':
+    case 'EXPIRED':
+    case 'CANCELLED':
+      return 'FAILED';
+    default:
+      return 'UNKNOWN';
+  }
+}
+
+// Monnify expects "yyyy-MM-dd HH:mm:ss"; default to +7 days end-of-day.
+function toMonnifyExpiry(dueDate?: string): string {
+  const base = dueDate
+    ? new Date(`${dueDate}T23:59:59`)
+    : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+  const pad = (n: number): string => String(n).padStart(2, '0');
+  return `${base.getFullYear()}-${pad(base.getMonth() + 1)}-${pad(
+    base.getDate(),
+  )} ${pad(base.getHours())}:${pad(base.getMinutes())}:${pad(base.getSeconds())}`;
 }

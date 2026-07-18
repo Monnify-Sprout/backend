@@ -44,19 +44,26 @@ This gates every merchant's onboarding, not one optional feature.
 
 ## Current phase
 
-Phases 1 (schema + merchant auth) and 2 (BVN/NIN verification + sub-account
-creation) **complete and verified end to end** against the live Supabase DB.
-Migrations in `migrations/` (`npm run migrate`); `npm run smoke` runs the E2E proof.
+Phases 1–3 **complete and verified end to end** against the live Supabase DB
+(`npm run smoke` → 40/40). Migrations in `migrations/` (`npm run migrate`).
 
-Endpoints: `POST /api/auth/register`, `POST /api/auth/login`, protected
-`GET /api/me`, and protected `POST /api/verification` (submit BVN/NIN →
-verify → create Monnify sub-account → status becomes `active`). All DB access
-(app + DDL) goes through `pg`.
+Endpoints (all DB access via `pg`):
+- `POST /api/auth/register`, `POST /api/auth/login`, protected `GET /api/me`
+- protected `POST /api/verification` — BVN/NIN → verify → create sub-account → `active`
+- protected `POST /api/invoices` (create Dynamic Invoice), `GET /api/invoices`,
+  `GET /api/invoices/:id` (invoice + payment/settlement)
+- `POST /api/webhooks/monnify` — no auth; HMAC-SHA512 signature over the RAW body
+  (captured in `index.ts`), idempotent via `payments.event_key`, confirms with
+  Verify Transaction before marking Paid (never trusts the payload)
 
 Monnify is behind a provider abstraction (`src/lib/monnify/`) selected by
-`MONNIFY_VERIFICATION_MODE`: `mock` (default; deterministic, id ending in `0000`
-fails) vs `live` (real API, needs `MONNIFY_*` creds — un-testable in sandbox per
-PRD §5). A mock verification is flagged in the DB via `merchants.verification_mode`
-and logged, so it's never mistaken for real KYC.
+`MONNIFY_VERIFICATION_MODE`: `mock` (default; deterministic — BVN/NIN ending in
+`0000` fails; in-process ledger backs invoice/verify) vs `live` (real API, needs
+`MONNIFY_*` creds — un-testable in sandbox per PRD §5). Mock verifications are
+flagged in `merchants.verification_mode`.
 
-Next: Phase 3 — invoice creation, Monnify webhook, settlement split.
+Settlement: `SPROUT_COMMISSION_PERCENT` (default 1%); `MONNIFY_INVOICE_SPLIT_SUPPORTED`
+picks the Monnify `incomeSplitConfig` split path vs the safe manual fallback
+(PRD §7.3, still UNCONFIRMED). The split is recorded on every payment either way.
+
+Next: Phase 4 — connected-account read-only analytics (PRD §7.6).

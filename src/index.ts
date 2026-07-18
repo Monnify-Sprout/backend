@@ -7,7 +7,15 @@ import { apiRouter } from './routes';
 
 const app = express();
 
-app.use(express.json());
+// Capture the raw body so the Monnify webhook can validate its HMAC signature
+// over the exact bytes received, not the re-serialised JSON.
+app.use(
+  express.json({
+    verify: (req, _res, buf) => {
+      (req as express.Request).rawBody = buf;
+    },
+  }),
+);
 
 // Liveness probe.
 app.get('/health', (_req, res) => {

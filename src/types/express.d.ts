@@ -8,6 +8,9 @@ declare global {
         id: string;
         email: string;
       };
+      // Raw request body bytes, captured by express.json's verify hook for
+      // webhook signature validation.
+      rawBody?: Buffer;
     }
   }
 }
