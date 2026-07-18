@@ -1,0 +1,38 @@
+# Sprout backend — manual smoke requests (VS Code REST Client / JetBrains HTTP).
+# Run register, copy the login token into @token, then call the protected route.
+
+@base = http://localhost:4000
+
+### Health
+GET {{base}}/health
+
+### Register a merchant (defaults to onboarding / pending — never active)
+POST {{base}}/api/auth/register
+Content-Type: application/json
+
+{
+  "business_name": "Demo Store",
+  "owner_name": "Ada Demo",
+  "phone": "08031234567",
+  "email": "ada@sprout.test",
+  "password": "sprout-demo-1234"
+}
+
+### Login (returns { token, merchant })
+# @name login
+POST {{base}}/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "ada@sprout.test",
+  "password": "sprout-demo-1234"
+}
+
+@token = {{login.response.body.token}}
+
+### Protected route — with valid token
+GET {{base}}/api/me
+Authorization: Bearer {{token}}
+
+### Protected route — no token (expect 401)
+GET {{base}}/api/me

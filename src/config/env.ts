@@ -1,0 +1,38 @@
+import 'dotenv/config';
+import { z } from 'zod';
+
+// Validated, typed environment. Import this instead of reading process.env
+// directly so a misconfigured deployment fails fast at boot.
+//
+// Phase 1 only needs the DB connection + JWT config. Monnify/encryption vars
+// arrive in later phases and are intentionally optional here.
+const envSchema = z.object({
+  NODE_ENV: z
+    .enum(['development', 'test', 'production'])
+    .default('development'),
+  PORT: z.coerce.number().int().positive().default(4000),
+
+  // Supabase as managed Postgres, accessed directly via node-postgres (pg).
+  // This is the app's only DB connection and is used by the migration runner too.
+  SUPABASE_DB_URL: z.string().min(1),
+
+  // Our own JWT auth (not Supabase Auth).
+  JWT_SECRET: z.string().min(16, 'JWT_SECRET must be at least 16 characters'),
+  JWT_EXPIRES_IN: z.string().default('1h'),
+
+  // Present from Phase 2 onward; kept optional so Phase 1 can run without them.
+  MONNIFY_VERIFICATION_MODE: z.enum(['live', 'mock']).default('mock'),
+});
+
+const parsed = envSchema.safeParse(process.env);
+
+if (!parsed.success) {
+  console.error('❌ Invalid environment configuration:');
+  for (const issue of parsed.error.issues) {
+    console.error(`  - ${issue.path.join('.') || '(root)'}: ${issue.message}`);
+  }
+  console.error('See .env.example for the required variables.');
+  process.exit(1);
+}
+
+export const env = parsed.data;

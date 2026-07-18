@@ -7,8 +7,13 @@ the summary, those are the source of truth.
 
 ## Stack
 
-Express, TypeScript, Supabase (Postgres client, service-role key server-side only —
-not Supabase Auth), JWT (our own auth), bcrypt, zod, dotenv.
+Express, TypeScript, Supabase as managed Postgres accessed directly via `pg`
+(node-postgres) over the session pooler — NOT Supabase Auth and NOT the
+supabase-js REST client. JWT (our own auth), bcrypt, zod, dotenv.
+
+The one DB connection string is `SUPABASE_DB_URL`; the shared pool lives in
+`src/lib/db.ts` and is used by both the app and the migration runner. (The v2
+build plan text still says "supabase-js" — the code intentionally supersedes it.)
 
 ## Core mechanic — pin this
 
@@ -39,4 +44,9 @@ This gates every merchant's onboarding, not one optional feature.
 
 ## Current phase
 
-Phase 0 (scaffolding) complete. Next: Phase 1 — database schema & merchant auth.
+Phase 1 (database schema & merchant auth) **complete and verified end to end**
+against the live Supabase DB. Migrations in `migrations/` (`npm run migrate`); auth
+is `POST /api/auth/register`, `POST /api/auth/login`, protected `GET /api/me`. All
+DB access (app + DDL) goes through `pg`. `npm run smoke` runs the E2E proof.
+
+Next: Phase 2 — BVN/NIN verification & sub-account creation (needs Monnify creds).

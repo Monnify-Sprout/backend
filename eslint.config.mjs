@@ -7,4 +7,18 @@ export default tseslint.config(
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
   prettierConfig,
+  {
+    rules: {
+      // Allow intentionally-unused args/vars prefixed with `_` (e.g. Express's
+      // required-but-unused error-handler `next`).
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        {
+          argsIgnorePattern: '^_',
+          varsIgnorePattern: '^_',
+          caughtErrorsIgnorePattern: '^_',
+        },
+      ],
+    },
+  },
 );
