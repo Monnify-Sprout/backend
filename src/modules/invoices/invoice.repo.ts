@@ -124,6 +124,65 @@ export async function findInvoiceByReference(
   return rows[0] ?? null;
 }
 
+// A pending invoice past its due date is expired (PRD §7.2). Expiry is applied
+// lazily at read time rather than by a scheduler: any read path that can show
+// an invoice's status sweeps first, so status is settled server-side and the
+// client never derives it. Due "today" is still payable until the day ends.
+export async function expireOverdueInvoiceByReference(
+  invoiceReference: string,
+): Promise<void> {
+  await query(
+    `update invoices set status = 'expired'
+      where invoice_reference = $1 and status = 'pending'
+        and due_date is not null and due_date < current_date`,
+    [invoiceReference],
+  );
+}
+
+export async function expireOverdueInvoicesForMerchant(
+  merchantId: string,
+): Promise<void> {
+  await query(
+    `update invoices set status = 'expired'
+      where merchant_id = $1 and status = 'pending'
+        and due_date is not null and due_date < current_date`,
+    [merchantId],
+  );
+}
+
+// Safe subset for the buyer-facing payment page: what the invoice is, who it is
+// from (business name only, no merchant contact details), and how to pay.
+export interface PublicInvoiceLookup {
+  id: string; // internal - used to join the payment, never sent to the client
+  invoice_reference: string;
+  business_name: string;
+  customer_name: string;
+  description: string | null;
+  amount: string;
+  currency: string;
+  due_date: string | null;
+  status: InvoiceStatus;
+  virtual_account_number: string | null;
+  checkout_url: string | null;
+  created_at: string;
+}
+
+export async function findPublicInvoiceByReference(
+  invoiceReference: string,
+): Promise<PublicInvoiceLookup | null> {
+  const rows = await query<PublicInvoiceLookup>(
+    `select i.id, i.invoice_reference, m.business_name, i.customer_name, i.description,
+            i.amount, i.currency, i.due_date, i.status,
+            i.virtual_account_number, i.checkout_url, i.created_at
+       from invoices i
+       join merchants m on m.id = i.merchant_id
+      where i.invoice_reference = $1
+      limit 1`,
+    [invoiceReference],
+  );
+  return rows[0] ?? null;
+}
+
 export async function findPaymentForInvoice(
   invoiceId: string,
 ): Promise<PublicPayment | null> {

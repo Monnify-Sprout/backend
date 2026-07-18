@@ -44,8 +44,8 @@ This gates every merchant's onboarding, not one optional feature.
 
 ## Current phase
 
-Phases 1–4 **complete and verified end to end** against the live Supabase DB
-(`npm run smoke` → 54/54). Migrations in `migrations/` (`npm run migrate`).
+Phases 1–7 **complete and verified end to end** against the live Supabase DB
+(`npm run smoke` → 65/65). Migrations in `migrations/` (`npm run migrate`).
 
 Endpoints (all DB access via `pg`):
 - `POST /api/auth/register`, `POST /api/auth/login`, protected `GET /api/me`
@@ -55,6 +55,12 @@ Endpoints (all DB access via `pg`):
 - `POST /api/webhooks/monnify` - no auth; HMAC-SHA512 signature over the RAW body
   (captured in `index.ts`), idempotent via `payments.event_key`, confirms with
   Verify Transaction before marking Paid (never trusts the payload)
+- PUBLIC `GET /api/public/invoices/:reference` (Phase 7, no auth) - buyer-facing
+  safe subset: business name + invoice basics; payment channels nulled unless
+  `pending`; minimal payment info when paid; never customer email, merchant
+  contact, or settlement/commission. Read paths lazily flip overdue `pending`
+  invoices to `expired` server-side (public lookup + merchant list/detail), so
+  clients never derive expiry.
 - protected `POST /api/connected-accounts` (validate then AES-256-GCM-encrypt the
   merchant's own Monnify creds - never logged/returned after creation),
   `GET /api/connected-accounts`, `POST /api/connected-accounts/:id/sync`
@@ -77,4 +83,8 @@ picks the Monnify `incomeSplitConfig` split path vs the safe manual fallback
 Connected-account credential encryption needs `CREDENTIALS_ENCRYPTION_KEY`
 (32-byte hex; `src/lib/crypto.ts`).
 
-Next: Phase 5 - frontend foundation.
+Monnify SANDBOX api key/secret/base URL are set in `.env` (2026-07-18); the
+contract code is still pending. Monnify signs webhooks with the secret key, so
+there is no separate webhook secret to obtain.
+
+Next: Phase 9a - seed script (Phase 8 is frontend-only).

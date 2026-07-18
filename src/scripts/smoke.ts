@@ -55,6 +55,17 @@ interface WebhookAck {
   received?: boolean;
   outcome?: string;
 }
+interface PublicInvoiceView {
+  invoice_reference?: string;
+  business_name?: string;
+  status?: string;
+  virtual_account_number?: string | null;
+  checkout_url?: string | null;
+}
+interface PublicLookupResponse {
+  invoice?: PublicInvoiceView;
+  payment?: { amount?: string; paid_at?: string | null } | null;
+}
 interface ConnectedAccountView {
   id?: string;
   status?: string;
@@ -351,6 +362,40 @@ async function main(): Promise<void> {
     },
   });
 
+  // ── Phase 7: public (buyer-facing) invoice lookup ──────────────────────────
+
+  // 11b. Public lookup of a PENDING invoice: no auth, payment channels offered,
+  // and no merchant PII or internal identifiers in the response.
+  const pubPending = await fetch(
+    `${BASE}/api/public/invoices/${invoice?.invoice_reference}`,
+  );
+  const pubPendingText = await pubPending.text();
+  const pubPendingBody = JSON.parse(pubPendingText) as PublicLookupResponse;
+  check('public lookup needs no auth (200)', pubPending.status === 200, pubPending.status);
+  check(
+    'public pending invoice offers both payment channels',
+    typeof pubPendingBody.invoice?.virtual_account_number === 'string' &&
+      typeof pubPendingBody.invoice?.checkout_url === 'string',
+    pubPendingBody.invoice,
+  );
+  check(
+    'public lookup shows the business name',
+    pubPendingBody.invoice?.business_name === 'Demo Store',
+    pubPendingBody.invoice?.business_name,
+  );
+  check(
+    'public lookup leaks no merchant PII or internals',
+    !pubPendingText.includes(email) &&
+      !pubPendingText.includes(phone) &&
+      !pubPendingText.includes('customer_email') &&
+      !pubPendingText.includes('merchant_id') &&
+      !pubPendingText.includes(invId),
+  );
+
+  // 11c. Unknown reference is a clean 404
+  const pubMissing = await fetch(`${BASE}/api/public/invoices/SPT-DOES-NOT-EXIST`);
+  check('unknown public reference is a 404', pubMissing.status === 404, pubMissing.status);
+
   // 12. Webhook with a bad signature is rejected
   const badSig = await fetch(`${BASE}/api/webhooks/monnify`, {
     method: 'POST',
@@ -405,6 +450,62 @@ async function main(): Promise<void> {
     }),
   );
   check('invoice still paid after replay', afterReplay.invoice?.status === 'paid', afterReplay.invoice?.status);
+
+  // 16b. Public lookup of a PAID invoice: terminal state, channels withheld,
+  // minimal payment info shown, settlement/commission stay private.
+  const pubPaid = await fetch(
+    `${BASE}/api/public/invoices/${invoice?.invoice_reference}`,
+  );
+  const pubPaidText = await pubPaid.text();
+  const pubPaidBody = JSON.parse(pubPaidText) as PublicLookupResponse;
+  check('public paid invoice reads "paid"', pubPaidBody.invoice?.status === 'paid', pubPaidBody.invoice?.status);
+  check(
+    'paid invoice withholds payment channels',
+    pubPaidBody.invoice?.virtual_account_number === null &&
+      pubPaidBody.invoice?.checkout_url === null,
+    pubPaidBody.invoice,
+  );
+  check(
+    'paid invoice shows the payment received',
+    pubPaidBody.payment != null && typeof pubPaidBody.payment.amount === 'string',
+    pubPaidBody.payment,
+  );
+  check(
+    'public payment omits settlement/commission',
+    !pubPaidText.includes('settlement_amount') &&
+      !pubPaidText.includes('commission_amount'),
+  );
+
+  // 16c. An overdue pending invoice flips to "expired" on public read and no
+  // longer offers payment (Phase 7 acceptance).
+  const overdue = await readBody<InvoiceCreateResponse>(
+    await fetch(`${BASE}/api/invoices`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        customer_name: 'Late Buyer',
+        description: 'Order #43 (overdue)',
+        amount: 2500,
+        due_date: '2026-01-01',
+      }),
+    }),
+  );
+  const pubExpired = await readBody<PublicLookupResponse>(
+    await fetch(
+      `${BASE}/api/public/invoices/${overdue.invoice?.invoice_reference}`,
+    ),
+  );
+  check(
+    'overdue invoice reads as "expired" on public lookup',
+    pubExpired.invoice?.status === 'expired',
+    pubExpired.invoice?.status,
+  );
+  check(
+    'expired invoice withholds payment channels',
+    pubExpired.invoice?.virtual_account_number === null &&
+      pubExpired.invoice?.checkout_url === null,
+    pubExpired.invoice,
+  );
 
   // ── Phase 4: connected accounts + shared analytics (mock mode) ─────────────
 

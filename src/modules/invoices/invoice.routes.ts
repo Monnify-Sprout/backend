@@ -5,6 +5,7 @@ import { requireAuth } from '../../middleware/auth';
 import { HttpError } from '../../middleware/error';
 
 import {
+  expireOverdueInvoicesForMerchant,
   findInvoiceForMerchant,
   findPaymentForInvoice,
   listInvoicesForMerchant,
@@ -35,6 +36,8 @@ invoiceRouter.post('/', async (req, res, next) => {
 // GET /api/invoices - the merchant's invoices, newest first (dashboard, FR-08).
 invoiceRouter.get('/', async (req, res, next) => {
   try {
+    // Lazy expiry sweep so the dashboard agrees with the public payment page.
+    await expireOverdueInvoicesForMerchant(req.merchant!.id);
     const invoices = await listInvoicesForMerchant(req.merchant!.id);
     res.json({ invoices });
   } catch (err) {
@@ -49,6 +52,7 @@ invoiceRouter.get('/:id', async (req, res, next) => {
     if (!id) {
       throw new HttpError(400, 'Invalid invoice id.');
     }
+    await expireOverdueInvoicesForMerchant(req.merchant!.id);
     const invoice = await findInvoiceForMerchant(req.merchant!.id, id);
     if (!invoice) {
       throw new HttpError(404, 'Invoice not found.');

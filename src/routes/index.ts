@@ -7,6 +7,7 @@ import { authRouter } from '../modules/auth/auth.routes';
 import { findMerchantById } from '../modules/auth/auth.repo';
 import { connectedRouter } from '../modules/connected/connected.routes';
 import { invoiceRouter } from '../modules/invoices/invoice.routes';
+import { publicInvoiceRouter } from '../modules/invoices/public.routes';
 import { verificationRouter } from '../modules/verification/verification.routes';
 import { webhookRouter } from '../modules/webhooks/webhook.routes';
 
@@ -15,6 +16,7 @@ export const apiRouter = Router();
 apiRouter.use('/auth', authRouter);
 apiRouter.use('/verification', verificationRouter);
 apiRouter.use('/invoices', invoiceRouter);
+apiRouter.use('/public', publicInvoiceRouter); // unauthenticated, safe subset
 apiRouter.use('/webhooks', webhookRouter);
 apiRouter.use('/connected-accounts', connectedRouter);
 apiRouter.use('/analytics', analyticsRouter);
