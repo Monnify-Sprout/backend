@@ -27,6 +27,8 @@ interface LoginResponse {
 interface InvoiceView {
   id?: string;
   status?: string;
+  customer_name?: string | null;
+  item?: string | null;
   invoice_reference?: string | null;
   virtual_account_number?: string | null;
   checkout_url?: string | null;
@@ -307,9 +309,39 @@ async function main(): Promise<void> {
   const invForbidden = await fetch(`${BASE}/api/invoices`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${token2}` },
-    body: JSON.stringify({ customer_name: 'Blocked', amount: 5000 }),
+    body: JSON.stringify({ customer_name: 'Blocked', item: 'Test item', amount: 5000 }),
   });
   check('non-active merchant cannot create invoice (403)', invForbidden.status === 403, invForbidden.status);
+
+  // 10b. Input validation (active merchant): item is required, and a buyer must
+  // be identified by at least one of name/phone/email/social handle.
+  const noItem = await fetch(`${BASE}/api/invoices`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ customer_name: 'No Item', amount: 1000 }),
+  });
+  check('invoice without an item is rejected (422)', noItem.status === 422, noItem.status);
+
+  const noIdentity = await fetch(`${BASE}/api/invoices`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ item: 'Ghost order', amount: 1000 }),
+  });
+  check('invoice with no buyer identifier is rejected (422)', noIdentity.status === 422, noIdentity.status);
+
+  // 10c. A buyer known only by a social handle (no name) is accepted.
+  const handleOnly = await fetch(`${BASE}/api/invoices`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ customer_social_handle: '@handle_only', item: 'Ankara bag', amount: 3000 }),
+  });
+  const handleOnlyBody = await readBody<InvoiceCreateResponse>(handleOnly);
+  check('handle-only buyer (no name) is accepted (201)', handleOnly.status === 201, handleOnly.status);
+  check(
+    'handle-only invoice stores no customer name',
+    handleOnlyBody.invoice?.customer_name == null,
+    handleOnlyBody.invoice?.customer_name,
+  );
 
   // 11. Active merchant creates a Dynamic Invoice
   const invAmount = 15000;
@@ -318,7 +350,8 @@ async function main(): Promise<void> {
     headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
     body: JSON.stringify({
       customer_name: 'Chidi Buyer',
-      description: 'Order #42',
+      item: 'Order #42',
+      notes: '3 yards of ankara',
       amount: invAmount,
       due_date: '2026-12-31',
     }),
@@ -484,7 +517,7 @@ async function main(): Promise<void> {
       headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
       body: JSON.stringify({
         customer_name: 'Late Buyer',
-        description: 'Order #43 (overdue)',
+        item: 'Order #43 (overdue)',
         amount: 2500,
         due_date: '2026-01-01',
       }),

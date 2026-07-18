@@ -56,10 +56,24 @@ export async function createInvoice(
   )
     .toString('hex')
     .toUpperCase()}`;
-  const customerEmail =
+  // Monnify requires an email; when the buyer gave none we synthesise a
+  // placeholder for the API call ONLY - the DB keeps the real value (or null),
+  // so the "at least one identifier" rule stays meaningful.
+  const monnifyEmail =
     input.customer_email ??
     `invoice+${invoiceReference.toLowerCase()}@sprout.invalid`;
-  const description = input.description ?? `Payment for ${input.customer_name}`;
+
+  // Monnify's Create Invoice requires a customer name; the buyer may only have
+  // given a handle or phone, so fall back through whatever identifies them.
+  const handle = input.customer_social_handle
+    ? input.customer_social_handle.startsWith('@')
+      ? input.customer_social_handle
+      : `@${input.customer_social_handle}`
+    : null;
+  const customerName =
+    input.customer_name ?? handle ?? input.customer_phone ?? 'Customer';
+  // The Monnify description is the item, with notes appended when present.
+  const description = input.notes ? `${input.item} (${input.notes})` : input.item;
 
   const provider = getMonnifyProvider();
   const created = await provider.createInvoice({
@@ -67,8 +81,8 @@ export async function createInvoice(
     amount,
     currency: 'NGN',
     description,
-    customerName: input.customer_name,
-    customerEmail,
+    customerName,
+    customerEmail: monnifyEmail,
     dueDate: input.due_date,
     incomeSplit: splitSupported
       ? {
@@ -81,9 +95,12 @@ export async function createInvoice(
   const invoice = await insertInvoice({
     merchantId,
     invoiceReference,
-    customerName: input.customer_name,
-    customerEmail,
-    description,
+    customerName: input.customer_name ?? null,
+    customerEmail: input.customer_email ?? null,
+    customerPhone: input.customer_phone ?? null,
+    customerSocialHandle: handle,
+    item: input.item,
+    notes: input.notes ?? null,
     amount,
     currency: 'NGN',
     dueDate: input.due_date ?? null,

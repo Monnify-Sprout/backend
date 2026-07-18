@@ -7,9 +7,12 @@ export interface PublicInvoice {
   id: string;
   merchant_id: string;
   invoice_reference: string | null;
-  customer_name: string;
+  customer_name: string | null;
   customer_email: string | null;
-  description: string | null;
+  customer_phone: string | null;
+  customer_social_handle: string | null;
+  item: string | null;
+  notes: string | null;
   amount: string; // pg returns numeric as string
   currency: string;
   due_date: string | null;
@@ -36,7 +39,7 @@ export interface PublicPayment {
 }
 
 const INVOICE_COLUMNS =
-  'id, merchant_id, invoice_reference, customer_name, customer_email, description, amount, currency, due_date, status, virtual_account_number, checkout_url, monnify_transaction_reference, settlement_path, created_at, updated_at';
+  'id, merchant_id, invoice_reference, customer_name, customer_email, customer_phone, customer_social_handle, item, notes, amount, currency, due_date, status, virtual_account_number, checkout_url, monnify_transaction_reference, settlement_path, created_at, updated_at';
 
 const PAYMENT_COLUMNS =
   'id, invoice_id, amount, currency, payment_method, settlement_amount, commission_amount, monnify_transaction_reference, paid_at, created_at';
@@ -44,9 +47,12 @@ const PAYMENT_COLUMNS =
 export interface NewInvoice {
   merchantId: string;
   invoiceReference: string;
-  customerName: string;
-  customerEmail: string;
-  description: string | null;
+  customerName: string | null;
+  customerEmail: string | null;
+  customerPhone: string | null;
+  customerSocialHandle: string | null;
+  item: string;
+  notes: string | null;
   amount: number;
   currency: string;
   dueDate: string | null;
@@ -59,17 +65,21 @@ export interface NewInvoice {
 export async function insertInvoice(input: NewInvoice): Promise<PublicInvoice> {
   const rows = await query<PublicInvoice>(
     `insert into invoices
-       (merchant_id, invoice_reference, customer_name, customer_email, description,
+       (merchant_id, invoice_reference, customer_name, customer_email,
+        customer_phone, customer_social_handle, item, notes,
         amount, currency, due_date, status,
         monnify_transaction_reference, virtual_account_number, checkout_url, settlement_path)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', $9, $10, $11, $12)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'pending', $12, $13, $14, $15)
      returning ${INVOICE_COLUMNS}`,
     [
       input.merchantId,
       input.invoiceReference,
       input.customerName,
       input.customerEmail,
-      input.description,
+      input.customerPhone,
+      input.customerSocialHandle,
+      input.item,
+      input.notes,
       input.amount,
       input.currency,
       input.dueDate,
@@ -156,8 +166,9 @@ export interface PublicInvoiceLookup {
   id: string; // internal - used to join the payment, never sent to the client
   invoice_reference: string;
   business_name: string;
-  customer_name: string;
-  description: string | null;
+  customer_name: string | null;
+  customer_social_handle: string | null; // shown as the "billed to" label
+  item: string | null;
   amount: string;
   currency: string;
   due_date: string | null;
@@ -167,11 +178,14 @@ export interface PublicInvoiceLookup {
   created_at: string;
 }
 
+// Deliberately excludes `notes` (merchant-internal), customer phone/email
+// (minimise what a forwarded link exposes), and all settlement figures.
 export async function findPublicInvoiceByReference(
   invoiceReference: string,
 ): Promise<PublicInvoiceLookup | null> {
   const rows = await query<PublicInvoiceLookup>(
-    `select i.id, i.invoice_reference, m.business_name, i.customer_name, i.description,
+    `select i.id, i.invoice_reference, m.business_name,
+            i.customer_name, i.customer_social_handle, i.item,
             i.amount, i.currency, i.due_date, i.status,
             i.virtual_account_number, i.checkout_url, i.created_at
        from invoices i
