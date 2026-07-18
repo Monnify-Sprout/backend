@@ -11,7 +11,7 @@ import {
 } from './auth.repo';
 
 // Registers a merchant. A freshly registered merchant defaults to
-// verification_status='pending' and status='onboarding' — it is NOT active
+// verification_status='pending' and status='onboarding' - it is NOT active
 // until Phase 2's verification + sub-account creation both succeed.
 export async function registerMerchant(
   input: RegisterInput,

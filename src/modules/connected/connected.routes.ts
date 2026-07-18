@@ -10,11 +10,11 @@ import { connectAccount, syncConnectedAccount } from './connected.service';
 
 export const connectedRouter = Router();
 
-// Any authenticated merchant may connect an external account — this segment is
+// Any authenticated merchant may connect an external account - this segment is
 // pure reporting and does not require Sprout verification (PRD §7.6).
 connectedRouter.use(requireAuth);
 
-// POST /api/connected-accounts — link an existing Monnify account (read-only).
+// POST /api/connected-accounts - link an existing Monnify account (read-only).
 connectedRouter.post('/', async (req, res, next) => {
   try {
     const parsed = connectAccountSchema.safeParse(req.body);
@@ -28,7 +28,7 @@ connectedRouter.post('/', async (req, res, next) => {
   }
 });
 
-// GET /api/connected-accounts — the merchant's linked accounts (no credentials).
+// GET /api/connected-accounts - the merchant's linked accounts (no credentials).
 connectedRouter.get('/', async (req, res, next) => {
   try {
     const accounts = await listConnectedAccounts(req.merchant!.id);
@@ -38,7 +38,7 @@ connectedRouter.get('/', async (req, res, next) => {
   }
 });
 
-// POST /api/connected-accounts/:id/sync — pull transaction history.
+// POST /api/connected-accounts/:id/sync - pull transaction history.
 connectedRouter.post('/:id/sync', async (req, res, next) => {
   try {
     const { id } = req.params;

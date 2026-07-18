@@ -3,7 +3,7 @@ import { Pool, type QueryResultRow } from 'pg';
 import { env } from '../config/env';
 
 // Single shared connection pool to Supabase Postgres via the session pooler.
-// We treat Supabase as plain managed Postgres (no supabase-js, no PostgREST) —
+// We treat Supabase as plain managed Postgres (no supabase-js, no PostgREST) -
 // this avoids the REST schema-cache lag and keeps raw SQL available for the
 // Phase 4 analytics aggregations.
 export const pool = new Pool({

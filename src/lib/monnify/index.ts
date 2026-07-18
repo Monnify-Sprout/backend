@@ -15,7 +15,7 @@ export function getMonnifyProvider(): MonnifyProvider {
     } else {
       provider = new MonnifyMockProvider();
       console.warn(
-        '[monnify] MOCK verification mode — BVN/NIN checks are simulated and must NOT ' +
+        '[monnify] MOCK verification mode - BVN/NIN checks are simulated and must NOT ' +
           'be treated as real KYC. Set MONNIFY_VERIFICATION_MODE=live for the real integration.',
       );
     }

@@ -25,7 +25,7 @@ app.get('/health', (_req, res) => {
 // Feature API (auth + protected routes).
 app.use('/api', apiRouter);
 
-// Fallbacks — order matters: 404 first, then the error handler.
+// Fallbacks - order matters: 404 first, then the error handler.
 app.use(notFoundHandler);
 app.use(errorHandler);
 

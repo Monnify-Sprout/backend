@@ -1,4 +1,4 @@
-# Sprout backend — manual smoke requests (VS Code REST Client / JetBrains HTTP).
+# Sprout backend - manual smoke requests (VS Code REST Client / JetBrains HTTP).
 # Run register, copy the login token into @token, then call the protected route.
 
 @base = http://localhost:4000
@@ -6,7 +6,7 @@
 ### Health
 GET {{base}}/health
 
-### Register a merchant (defaults to onboarding / pending — never active)
+### Register a merchant (defaults to onboarding / pending - never active)
 POST {{base}}/api/auth/register
 Content-Type: application/json
 
@@ -30,14 +30,14 @@ Content-Type: application/json
 
 @token = {{login.response.body.token}}
 
-### Protected route — with valid token
+### Protected route - with valid token
 GET {{base}}/api/me
 Authorization: Bearer {{token}}
 
-### Protected route — no token (expect 401)
+### Protected route - no token (expect 401)
 GET {{base}}/api/me
 
-### Verify identity (mock mode) — verifies + creates sub-account + activates
+### Verify identity (mock mode) - verifies + creates sub-account + activates
 # Any 11-digit id NOT ending in 0000 passes in mock mode.
 POST {{base}}/api/verification
 Authorization: Bearer {{token}}
@@ -48,7 +48,7 @@ Content-Type: application/json
   "id_number": "22212345678"
 }
 
-### Verify identity — failure path (mock: id ending in 0000 fails)
+### Verify identity - failure path (mock: id ending in 0000 fails)
 POST {{base}}/api/verification
 Authorization: Bearer {{token}}
 Content-Type: application/json
@@ -101,17 +101,17 @@ Authorization: Bearer {{token}}
 POST {{base}}/api/connected-accounts/{{connected.response.body.account.id}}/sync
 Authorization: Bearer {{token}}
 
-### Analytics — my own merchant data
+### Analytics - my own merchant data
 GET {{base}}/api/analytics?days=30
 Authorization: Bearer {{token}}
 
-### Analytics — a connected account (same response shape)
+### Analytics - a connected account (same response shape)
 GET {{base}}/api/analytics?connected_account_id={{connected.response.body.account.id}}&days=30
 Authorization: Bearer {{token}}
 
 ### Monnify collection webhook (no auth; HMAC-SHA512 of the RAW body in the
 ### monnify-signature header, keyed by MONNIFY_WEBHOOK_SECRET). The signature
-### can't be hardcoded here — `npm run smoke` exercises this end to end.
+### can't be hardcoded here - `npm run smoke` exercises this end to end.
 POST {{base}}/api/webhooks/monnify
 Content-Type: application/json
 monnify-signature: <hex hmac-sha512 of the body>

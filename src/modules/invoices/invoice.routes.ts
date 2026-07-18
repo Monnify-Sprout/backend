@@ -17,7 +17,7 @@ export const invoiceRouter = Router();
 // All invoice routes are merchant-scoped.
 invoiceRouter.use(requireAuth);
 
-// POST /api/invoices — create a Dynamic Invoice (returns virtual account +
+// POST /api/invoices - create a Dynamic Invoice (returns virtual account +
 // checkout URL + the settlement split).
 invoiceRouter.post('/', async (req, res, next) => {
   try {
@@ -32,7 +32,7 @@ invoiceRouter.post('/', async (req, res, next) => {
   }
 });
 
-// GET /api/invoices — the merchant's invoices, newest first (dashboard, FR-08).
+// GET /api/invoices - the merchant's invoices, newest first (dashboard, FR-08).
 invoiceRouter.get('/', async (req, res, next) => {
   try {
     const invoices = await listInvoicesForMerchant(req.merchant!.id);
@@ -42,7 +42,7 @@ invoiceRouter.get('/', async (req, res, next) => {
   }
 });
 
-// GET /api/invoices/:id — one invoice plus its payment/settlement outcome.
+// GET /api/invoices/:id - one invoice plus its payment/settlement outcome.
 invoiceRouter.get('/:id', async (req, res, next) => {
   try {
     const { id } = req.params;

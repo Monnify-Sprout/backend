@@ -28,7 +28,7 @@ export interface MonnifyWebhookPayload {
 }
 
 // Processes a Monnify collection webhook. Signature is validated at the route
-// before this runs. FR-06/FR-07: never trust the payload — confirm server-side
+// before this runs. FR-06/FR-07: never trust the payload - confirm server-side
 // with Verify Transaction, and make replays a no-op.
 export async function processMonnifyWebhook(
   payload: MonnifyWebhookPayload,
@@ -47,12 +47,12 @@ export async function processMonnifyWebhook(
   if (!invoice) {
     return 'unknown_invoice';
   }
-  // Already settled — any further delivery of this event is a no-op.
+  // Already settled - any further delivery of this event is a no-op.
   if (invoice.status === 'paid') {
     return 'duplicate';
   }
 
-  // Authoritative check before marking Paid (FR-07) — never the webhook alone.
+  // Authoritative check before marking Paid (FR-07) - never the webhook alone.
   const provider = getMonnifyProvider();
   const verified = await provider.verifyTransaction(transactionReference);
   if (verified.status !== 'PAID') {

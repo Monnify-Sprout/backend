@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 // PRD §7.2: customer name, description, amount, due date. Monnify also needs a
-// customer email — optional here and synthesised by the service when absent.
+// customer email - optional here and synthesised by the service when absent.
 export const createInvoiceSchema = z.object({
   customer_name: z.string().trim().min(1).max(200),
   customer_email: z

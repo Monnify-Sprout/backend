@@ -63,7 +63,7 @@ export function toPublicMerchant(row: MerchantRow): PublicMerchant {
   };
 }
 
-// Postgres unique_violation — thrown by node-postgres as error.code.
+// Postgres unique_violation - thrown by node-postgres as error.code.
 export function isUniqueViolation(err: unknown): boolean {
   return (
     typeof err === 'object' &&
@@ -100,7 +100,7 @@ export async function insertMerchant(
   return rows[0]!;
 }
 
-// Includes password_hash — used by login only.
+// Includes password_hash - used by login only.
 export async function findMerchantByEmail(
   email: string,
 ): Promise<MerchantRow | null> {

@@ -1,6 +1,6 @@
 import { query } from '../../lib/db';
 
-// PRD §7.5 / FR-09 / FR-11 — one analytics engine, two data sources:
+// PRD §7.5 / FR-09 / FR-11 - one analytics engine, two data sources:
 //   merchant           → its own paid invoices (payments ⋈ invoices)
 //   connected account  → pulled external_transactions
 // Both feed the SAME aggregation SQL over a normalised base row set

@@ -3,7 +3,7 @@ import type { ExternalTransactionRecord } from '../../lib/monnify/types';
 
 export type ConnectedStatus = 'connected' | 'disconnected' | 'error';
 
-// Safe projection — the encrypted *_ref columns are NEVER selected here, so no
+// Safe projection - the encrypted *_ref columns are NEVER selected here, so no
 // route can leak them (even accidentally) after creation.
 export interface PublicConnectedAccount {
   id: string;
@@ -68,7 +68,7 @@ export async function findConnectedAccount(
   return rows[0] ?? null;
 }
 
-// The one read that touches ciphertext — used only by the sync flow, decrypted
+// The one read that touches ciphertext - used only by the sync flow, decrypted
 // transiently, never returned to a client.
 export async function readCredentialCiphertexts(
   merchantId: string,

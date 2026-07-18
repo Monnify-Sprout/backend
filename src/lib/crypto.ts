@@ -5,7 +5,7 @@ import { HttpError } from '../middleware/error';
 
 // AES-256-GCM for connected-account Monnify credentials at rest (PRD §7.6, §12).
 // Ciphertext format: v1:<iv-hex>:<auth-tag-hex>:<ciphertext-hex>.
-// The *_ref columns in connected_accounts hold ONLY this format — never plaintext.
+// The *_ref columns in connected_accounts hold ONLY this format - never plaintext.
 
 function encryptionKey(): Buffer {
   const hex = env.CREDENTIALS_ENCRYPTION_KEY;

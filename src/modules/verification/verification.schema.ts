@@ -7,7 +7,7 @@ export const verificationSchema = z.object({
     .string()
     .trim()
     .regex(/^\d{11}$/, 'BVN/NIN must be exactly 11 digits'),
-  // Settlement destination — required ONLY by the live Monnify sub-account call
+  // Settlement destination - required ONLY by the live Monnify sub-account call
   // (Nigerian bank code = 3 digits, NUBAN account = 10 digits). Optional here so
   // the mock/demo path stays a single field; ignored in mock mode.
   settlement_bank_code: z

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 // PRD §7.6: a merchant links their own direct Monnify contract, read-only.
-// The credential fields are validated for shape only — semantic validation is a
+// The credential fields are validated for shape only - semantic validation is a
 // live auth check against Monnify. Their values must never be logged or echoed.
 export const connectAccountSchema = z.object({
   business_name: z.string().trim().min(1).max(200),

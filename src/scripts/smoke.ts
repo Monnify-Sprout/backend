@@ -90,7 +90,7 @@ function check(name: string, ok: boolean, detail?: unknown): void {
   } else {
     failed += 1;
     console.error(
-      `  ✗ ${name}${detail === undefined ? '' : ` — ${JSON.stringify(detail)}`}`,
+      `  ✗ ${name}${detail === undefined ? '' : ` - ${JSON.stringify(detail)}`}`,
     );
   }
 }
@@ -241,7 +241,7 @@ async function main(): Promise<void> {
   });
   check('re-verifying an active merchant is rejected (409)', reVerify.status === 409, reVerify.status);
 
-  // 9. Failure path — a second merchant whose id fails the mock check (ends 0000)
+  // 9. Failure path - a second merchant whose id fails the mock check (ends 0000)
   const stamp2 = Date.now() + 1;
   const email2 = `demo+${stamp2}@sprout.test`;
   const phone2 = `081${String(10000000 + (stamp2 % 89999999))}`;

@@ -9,7 +9,7 @@ import {
 } from './verification.repo';
 import type { VerificationInput } from './verification.schema';
 
-// Never store the raw BVN/NIN (PRD §10) — keep a masked reference only.
+// Never store the raw BVN/NIN (PRD §10) - keep a masked reference only.
 function maskId(idType: 'BVN' | 'NIN', idNumber: string): string {
   return `${idType}:*******${idNumber.slice(-4)}`;
 }
@@ -50,7 +50,7 @@ export async function verifyMerchantIdentity(
 
   // A merchant only becomes Active once the sub-account ALSO exists (PRD §7.1).
   // Sub-account creation runs before any DB write, so if it throws the merchant
-  // stays 'pending' and can retry — no partial "verified but inactive" state.
+  // stays 'pending' and can retry - no partial "verified but inactive" state.
   const sub = await provider.createSubAccount({
     businessName: current.business_name,
     email: current.email,

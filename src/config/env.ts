@@ -24,7 +24,7 @@ const envSchema = z.object({
   // and the demo; 'live' calls the real API. See PRD §5.
   MONNIFY_VERIFICATION_MODE: z.enum(['live', 'mock']).default('mock'),
 
-  // Live Monnify integration — required ONLY when MONNIFY_VERIFICATION_MODE=live.
+  // Live Monnify integration - required ONLY when MONNIFY_VERIFICATION_MODE=live.
   // Kept optional so mock mode boots without them; the live provider asserts their
   // presence at call time.
   MONNIFY_BASE_URL: z.string().url().optional(),
@@ -32,14 +32,14 @@ const envSchema = z.object({
   MONNIFY_SECRET_KEY: z.string().optional(),
   MONNIFY_CONTRACT_CODE: z.string().optional(),
 
-  // Phase 3 — invoices, webhook, settlement.
+  // Phase 3 - invoices, webhook, settlement.
   // Shared secret Monnify signs collection webhooks with (HMAC-SHA512). Required
   // to accept webhooks; the mock/demo signs with this same value.
   MONNIFY_WEBHOOK_SECRET: z.string().optional(),
   // Sprout's platform commission as a percentage of each invoice (a Sprout
   // business decision, not a Monnify fee). PRD §7.3.
   SPROUT_COMMISSION_PERCENT: z.coerce.number().min(0).max(100).default(1),
-  // Whether Monnify's Create Invoice accepts incomeSplitConfig (UNCONFIRMED —
+  // Whether Monnify's Create Invoice accepts incomeSplitConfig (UNCONFIRMED -
   // PRD §7.3). 'true' → apply the split at settlement; 'false' → safe manual
   // fallback (100% to merchant, Sprout's cut as a separate transfer).
   MONNIFY_INVOICE_SPLIT_SUPPORTED: z
@@ -47,7 +47,7 @@ const envSchema = z.object({
     .default('false')
     .transform((v) => v === 'true'),
 
-  // Phase 4 — AES-256-GCM key for connected-account Monnify credentials at rest
+  // Phase 4 - AES-256-GCM key for connected-account Monnify credentials at rest
   // (32 bytes as 64 hex chars). Optional so earlier phases boot without it; the
   // crypto lib asserts presence when a credential is actually (de)encrypted.
   CREDENTIALS_ENCRYPTION_KEY: z

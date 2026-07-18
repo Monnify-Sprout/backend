@@ -14,7 +14,7 @@ async function main(): Promise<void> {
   const connectionString = process.env.SUPABASE_DB_URL;
   if (!connectionString) {
     console.error(
-      'SUPABASE_DB_URL is not set — needed to run migrations. See .env.example.',
+      'SUPABASE_DB_URL is not set - needed to run migrations. See .env.example.',
     );
     process.exit(1);
   }
@@ -67,7 +67,7 @@ async function main(): Promise<void> {
       }
     }
 
-    console.log(`\ndone — ${ran} migration(s) applied, ${files.length} on disk.`);
+    console.log(`\ndone - ${ran} migration(s) applied, ${files.length} on disk.`);
   } finally {
     await client.end();
   }

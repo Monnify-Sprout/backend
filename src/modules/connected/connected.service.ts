@@ -14,7 +14,7 @@ import type { ConnectAccountInput } from './connected.schema';
 
 // PRD §7.6 / FR-10: link an existing Monnify account read-only. Credentials are
 // checked against Monnify first, then stored encrypted. From here on they exist
-// in plaintext only transiently inside the sync flow — never in logs, responses,
+// in plaintext only transiently inside the sync flow - never in logs, responses,
 // or error messages.
 export async function connectAccount(
   merchantId: string,
@@ -50,7 +50,7 @@ export interface SyncResult {
 }
 
 // FR-11 data source: pull the account's transaction history into
-// external_transactions. Idempotent — re-syncing inserts only new references.
+// external_transactions. Idempotent - re-syncing inserts only new references.
 export async function syncConnectedAccount(
   merchantId: string,
   accountId: string,

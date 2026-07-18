@@ -1,9 +1,9 @@
--- 0001_init.sql — Sprout initial schema (Phase 1)
+-- 0001_init.sql - Sprout initial schema (Phase 1)
 -- Reference: PRD v2.0 §10 (Minimum Data Model), §9 (Functional Requirements).
 --
 -- Design notes:
 --   * UUID primary keys via pgcrypto's gen_random_uuid().
---   * Status/verification lifecycles are modelled as separate fields — a merchant
+--   * Status/verification lifecycles are modelled as separate fields - a merchant
 --     is NOT 'active' until Phase 2's BVN/NIN verification and sub-account creation
 --     both succeed.
 --   * Enum-like columns use text + CHECK constraints (cheaper to extend in later
@@ -53,7 +53,7 @@ create trigger merchants_set_updated_at
 
 -- connected_accounts (Phase 4) ---------------------------------------------
 -- Merchants who already have their own direct Monnify account can connect it
--- read-only. Credentials are encrypted at rest (Phase 4) — the *_ref columns
+-- read-only. Credentials are encrypted at rest (Phase 4) - the *_ref columns
 -- hold ciphertext, never plaintext.
 create table if not exists connected_accounts (
   id                     uuid primary key default gen_random_uuid(),

@@ -49,7 +49,7 @@ interface TransactionBody {
 // Real Monnify integration.
 //
 // IMPORTANT: BVN/NIN verification is Live-Mode-only (PRD §5) and sub-account
-// activation on Sprout's contract is a manual approval process (§11) — so this
+// activation on Sprout's contract is a manual approval process (§11) - so this
 // path cannot be exercised in sandbox. It is kept structurally complete behind the
 // env gate; confirm the exact verification endpoints against Monnify's live docs
 // before a production run. The hackathon demo runs on the mock provider.
@@ -201,7 +201,7 @@ export class MonnifyLiveProvider implements MonnifyProvider {
       expiryDate: toMonnifyExpiry(input.dueDate),
       paymentMethods: ['ACCOUNT_TRANSFER', 'CARD'],
     };
-    // Split path (PRD §7.3) — send only when we've confirmed Create Invoice
+    // Split path (PRD §7.3) - send only when we've confirmed Create Invoice
     // accepts incomeSplitConfig.
     if (input.incomeSplit) {
       body.incomeSplitConfig = [
@@ -263,7 +263,7 @@ export class MonnifyLiveProvider implements MonnifyProvider {
     };
   }
 
-  // ── Connected accounts (Phase 4) — auth with the SUPPLIED creds, not ours ──
+  // ── Connected accounts (Phase 4) - auth with the SUPPLIED creds, not ours ──
 
   // Fresh token per call: connected-account creds vary per request, so Sprout's
   // own token cache never applies here.
@@ -278,7 +278,7 @@ export class MonnifyLiveProvider implements MonnifyProvider {
     });
     const json = (await res.json()) as MonnifyEnvelope<AuthBody>;
     if (!res.ok || !json.requestSuccessful || !json.responseBody?.accessToken) {
-      // Deliberately generic — must never echo the credentials.
+      // Deliberately generic - must never echo the credentials.
       throw new HttpError(
         422,
         'Could not authenticate with Monnify using the supplied credentials.',

@@ -18,7 +18,7 @@ export function notFoundHandler(_req: Request, res: Response): void {
   res.status(404).json({ error: 'Not found' });
 }
 
-// Express identifies error handlers by their 4-arg signature — keep all four.
+// Express identifies error handlers by their 4-arg signature - keep all four.
 export function errorHandler(
   err: unknown,
   _req: Request,

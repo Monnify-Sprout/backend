@@ -19,7 +19,7 @@ apiRouter.use('/webhooks', webhookRouter);
 apiRouter.use('/connected-accounts', connectedRouter);
 apiRouter.use('/analytics', analyticsRouter);
 
-// Protected placeholder — proves the JWT middleware works and lets a client
+// Protected placeholder - proves the JWT middleware works and lets a client
 // read the authenticated merchant (including its non-Active status).
 apiRouter.get('/me', requireAuth, async (req, res, next) => {
   try {

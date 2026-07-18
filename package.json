@@ -2,7 +2,7 @@
   "name": "sprout-backend",
   "version": "0.1.0",
   "private": true,
-  "description": "Sprout API — Express + TypeScript backend for the APIConf Lagos x Monnify Developer Challenge",
+  "description": "Sprout API - Express + TypeScript backend for the APIConf Lagos x Monnify Developer Challenge",
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",

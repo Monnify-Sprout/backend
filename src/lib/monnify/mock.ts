@@ -15,7 +15,7 @@ import type {
 } from './types';
 
 // Small deterministic PRNG (mulberry32) so a mock connected account always
-// yields the same transaction history — re-syncs must hit the same references.
+// yields the same transaction history - re-syncs must hit the same references.
 function seededRandom(seed: number): () => number {
   let a = seed >>> 0;
   return () => {
@@ -123,7 +123,7 @@ export class MonnifyMockProvider implements MonnifyProvider {
     creds: ExternalCredentials,
   ): Promise<ValidateCredentialsResult> {
     // Demo rule: an API key ending in "BAD" fails so the rejection path can be
-    // shown on demand; anything else authenticates. Reason text is fixed — it
+    // shown on demand; anything else authenticates. Reason text is fixed - it
     // must never echo the supplied credentials.
     if (creds.apiKey.endsWith('BAD')) {
       return Promise.resolve({
@@ -138,7 +138,7 @@ export class MonnifyMockProvider implements MonnifyProvider {
     creds: ExternalCredentials,
   ): Promise<ExternalTransactionRecord[]> {
     // ~40 PAID transactions over the last 45 days, fully determined by the
-    // contract code — the same account always returns the same history.
+    // contract code - the same account always returns the same history.
     const rand = seededRandom(seedFrom(creds.contractCode));
     const methods = ['ACCOUNT_TRANSFER', 'CARD'];
     const customers = ['Ngozi A.', 'Tunde O.', 'Amara E.', 'Yusuf I.', 'Bisi K.'];

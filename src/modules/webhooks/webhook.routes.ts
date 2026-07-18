@@ -10,7 +10,7 @@ import {
 
 export const webhookRouter = Router();
 
-// POST /api/webhooks/monnify — Monnify's collection callback. No auth: trust is
+// POST /api/webhooks/monnify - Monnify's collection callback. No auth: trust is
 // established by the HMAC signature over the raw body. Acknowledge quickly (FR-06).
 webhookRouter.post('/monnify', (req, res, next) => {
   const signature = req.header('monnify-signature');

@@ -10,7 +10,7 @@ export const analyticsRouter = Router();
 
 // GET /api/analytics[?connected_account_id=…][&days=30]
 // Without connected_account_id: the merchant's own invoice/payment analytics.
-// With it: the same engine over that connected account's pulled history —
+// With it: the same engine over that connected account's pulled history -
 // identical response shape, so the frontend renders one component for both.
 analyticsRouter.get('/', requireAuth, async (req, res, next) => {
   try {
@@ -27,7 +27,7 @@ analyticsRouter.get('/', requireAuth, async (req, res, next) => {
       if (typeof connectedAccountId !== 'string' || !connectedAccountId) {
         throw new HttpError(422, 'connected_account_id must be a single id.');
       }
-      // Ownership check — a merchant can only read accounts they connected.
+      // Ownership check - a merchant can only read accounts they connected.
       const account = await findConnectedAccount(merchantId, connectedAccountId);
       if (!account) {
         throw new HttpError(404, 'Connected account not found.');

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-// Version-agnostic email check — avoids relying on Zod's evolving email API.
+// Version-agnostic email check - avoids relying on Zod's evolving email API.
 const email = z
   .string()
   .trim()

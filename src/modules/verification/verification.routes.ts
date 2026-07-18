@@ -9,7 +9,7 @@ import { verifyMerchantIdentity } from './verification.service';
 
 export const verificationRouter = Router();
 
-// POST /api/verification — the authenticated merchant submits their BVN/NIN.
+// POST /api/verification - the authenticated merchant submits their BVN/NIN.
 // Returns the updated merchant: verified+active on success, or failed (still not
 // active) with a stored reason. A mocked check is flagged via verification_mode.
 verificationRouter.post('/', requireAuth, async (req, res, next) => {

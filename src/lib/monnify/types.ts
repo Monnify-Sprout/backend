@@ -1,5 +1,5 @@
 // Provider abstraction over Monnify. Swapping `MONNIFY_VERIFICATION_MODE` between
-// 'live' and 'mock' selects a different implementation of this interface — no
+// 'live' and 'mock' selects a different implementation of this interface - no
 // caller changes anywhere else (Phase 2 acceptance).
 
 export type IdType = 'BVN' | 'NIN';
@@ -71,7 +71,7 @@ export interface VerifyTransactionResult {
 
 // ── Connected accounts (Phase 4) ────────────────────────────────────────────
 
-// A connected merchant's OWN Monnify credentials (PRD §7.6) — held in plaintext
+// A connected merchant's OWN Monnify credentials (PRD §7.6) - held in plaintext
 // only transiently, between decryption and the API call. Never logged.
 export interface ExternalCredentials {
   apiKey: string;
@@ -103,7 +103,7 @@ export interface MonnifyProvider {
   verifyTransaction(
     transactionReference: string,
   ): Promise<VerifyTransactionResult>;
-  // Phase 4 — these authenticate with the SUPPLIED credentials, not Sprout's own.
+  // Phase 4 - these authenticate with the SUPPLIED credentials, not Sprout's own.
   validateExternalCredentials(
     creds: ExternalCredentials,
   ): Promise<ValidateCredentialsResult>;

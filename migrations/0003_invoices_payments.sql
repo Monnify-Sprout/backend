@@ -1,4 +1,4 @@
--- 0003_invoices_payments.sql — Phase 3 (invoice creation, webhook, settlement).
+-- 0003_invoices_payments.sql - Phase 3 (invoice creation, webhook, settlement).
 -- Reference: PRD v2.0 §7.2, §7.3, §11, FR-04..FR-07, FR-12.
 --
 -- The invoices/payments tables exist from 0001; Phase 3 adds the few fields the
