@@ -44,9 +44,19 @@ This gates every merchant's onboarding, not one optional feature.
 
 ## Current phase
 
-Phase 1 (database schema & merchant auth) **complete and verified end to end**
-against the live Supabase DB. Migrations in `migrations/` (`npm run migrate`); auth
-is `POST /api/auth/register`, `POST /api/auth/login`, protected `GET /api/me`. All
-DB access (app + DDL) goes through `pg`. `npm run smoke` runs the E2E proof.
+Phases 1 (schema + merchant auth) and 2 (BVN/NIN verification + sub-account
+creation) **complete and verified end to end** against the live Supabase DB.
+Migrations in `migrations/` (`npm run migrate`); `npm run smoke` runs the E2E proof.
 
-Next: Phase 2 — BVN/NIN verification & sub-account creation (needs Monnify creds).
+Endpoints: `POST /api/auth/register`, `POST /api/auth/login`, protected
+`GET /api/me`, and protected `POST /api/verification` (submit BVN/NIN →
+verify → create Monnify sub-account → status becomes `active`). All DB access
+(app + DDL) goes through `pg`.
+
+Monnify is behind a provider abstraction (`src/lib/monnify/`) selected by
+`MONNIFY_VERIFICATION_MODE`: `mock` (default; deterministic, id ending in `0000`
+fails) vs `live` (real API, needs `MONNIFY_*` creds — un-testable in sandbox per
+PRD §5). A mock verification is flagged in the DB via `merchants.verification_mode`
+and logged, so it's never mistaken for real KYC.
+
+Next: Phase 3 — invoice creation, Monnify webhook, settlement split.

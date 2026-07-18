@@ -36,3 +36,24 @@ Authorization: Bearer {{token}}
 
 ### Protected route — no token (expect 401)
 GET {{base}}/api/me
+
+### Verify identity (mock mode) — verifies + creates sub-account + activates
+# Any 11-digit id NOT ending in 0000 passes in mock mode.
+POST {{base}}/api/verification
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "id_type": "BVN",
+  "id_number": "22212345678"
+}
+
+### Verify identity — failure path (mock: id ending in 0000 fails)
+POST {{base}}/api/verification
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "id_type": "NIN",
+  "id_number": "22212340000"
+}

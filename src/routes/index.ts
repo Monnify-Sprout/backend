@@ -4,10 +4,12 @@ import { requireAuth } from '../middleware/auth';
 import { HttpError } from '../middleware/error';
 import { authRouter } from '../modules/auth/auth.routes';
 import { findMerchantById } from '../modules/auth/auth.repo';
+import { verificationRouter } from '../modules/verification/verification.routes';
 
 export const apiRouter = Router();
 
 apiRouter.use('/auth', authRouter);
+apiRouter.use('/verification', verificationRouter);
 
 // Protected placeholder — proves the JWT middleware works and lets a client
 // read the authenticated merchant (including its non-Active status).

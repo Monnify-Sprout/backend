@@ -1,4 +1,5 @@
 import { query } from '../../lib/db';
+import type { VerificationMode } from '../../lib/monnify/types';
 
 export type VerificationStatus = 'pending' | 'verified' | 'failed';
 export type MerchantStatus = 'onboarding' | 'active' | 'suspended';
@@ -14,8 +15,10 @@ export interface MerchantRow {
   bvn_or_nin_ref: string | null;
   verification_status: VerificationStatus;
   verification_reason: string | null;
+  verification_mode: VerificationMode | null;
   sub_account_code: string | null;
   status: MerchantStatus;
+  verified_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -28,14 +31,19 @@ export interface PublicMerchant {
   phone: string;
   email: string;
   verification_status: VerificationStatus;
+  verification_reason: string | null;
+  verification_mode: VerificationMode | null;
   sub_account_code: string | null;
   status: MerchantStatus;
+  verified_at: string | null;
   created_at: string;
   updated_at: string;
 }
 
-const PUBLIC_COLUMNS =
-  'id, business_name, owner_name, phone, email, verification_status, sub_account_code, status, created_at, updated_at';
+// Column list for the safe projection. Exported so other merchant-facing modules
+// (e.g. verification) return the exact same shape.
+export const PUBLIC_MERCHANT_COLUMNS =
+  'id, business_name, owner_name, phone, email, verification_status, verification_reason, verification_mode, sub_account_code, status, verified_at, created_at, updated_at';
 
 export function toPublicMerchant(row: MerchantRow): PublicMerchant {
   return {
@@ -45,8 +53,11 @@ export function toPublicMerchant(row: MerchantRow): PublicMerchant {
     phone: row.phone,
     email: row.email,
     verification_status: row.verification_status,
+    verification_reason: row.verification_reason,
+    verification_mode: row.verification_mode,
     sub_account_code: row.sub_account_code,
     status: row.status,
+    verified_at: row.verified_at,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -76,7 +87,7 @@ export async function insertMerchant(
   const rows = await query<PublicMerchant>(
     `insert into merchants (business_name, owner_name, phone, email, password_hash)
      values ($1, $2, $3, $4, $5)
-     returning ${PUBLIC_COLUMNS}`,
+     returning ${PUBLIC_MERCHANT_COLUMNS}`,
     [
       input.business_name,
       input.owner_name,
@@ -104,7 +115,7 @@ export async function findMerchantById(
   id: string,
 ): Promise<PublicMerchant | null> {
   const rows = await query<PublicMerchant>(
-    `select ${PUBLIC_COLUMNS} from merchants where id = $1 limit 1`,
+    `select ${PUBLIC_MERCHANT_COLUMNS} from merchants where id = $1 limit 1`,
     [id],
   );
   return rows[0] ?? null;

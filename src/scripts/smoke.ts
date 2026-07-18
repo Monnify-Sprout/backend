@@ -11,6 +11,9 @@ const BASE =
 interface MerchantView {
   status?: string;
   verification_status?: string;
+  verification_mode?: string | null;
+  verification_reason?: string | null;
+  sub_account_code?: string | null;
   email?: string;
 }
 interface RegisterResponse {
@@ -130,6 +133,110 @@ async function main(): Promise<void> {
     'merchant is still not "active"',
     meBody.merchant?.status !== 'active',
     meBody.merchant?.status,
+  );
+
+  // ── Phase 2: BVN/NIN verification (mock mode) ──────────────────────────────
+
+  // 6. Unauthenticated / invalid verification requests are rejected
+  const verifyNoAuth = await fetch(`${BASE}/api/verification`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ id_type: 'BVN', id_number: '22212345678' }),
+  });
+  check('verification rejects missing token (401)', verifyNoAuth.status === 401, verifyNoAuth.status);
+
+  const verifyBad = await fetch(`${BASE}/api/verification`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ id_type: 'PASSPORT', id_number: '123' }),
+  });
+  check('verification rejects invalid payload (422)', verifyBad.status === 422, verifyBad.status);
+
+  // 7. Successful verification → verified + active + sub-account, flagged mock
+  const verifyOk = await fetch(`${BASE}/api/verification`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ id_type: 'BVN', id_number: '22212345678' }),
+  });
+  const verifyOkBody = await readBody<RegisterResponse>(verifyOk);
+  check('verification returns 200', verifyOk.status === 200, verifyOk.status);
+  check(
+    'verified merchant status is "active"',
+    verifyOkBody.merchant?.status === 'active',
+    verifyOkBody.merchant?.status,
+  );
+  check(
+    'verified merchant verification_status is "verified"',
+    verifyOkBody.merchant?.verification_status === 'verified',
+    verifyOkBody.merchant?.verification_status,
+  );
+  check(
+    'verified merchant has a sub_account_code',
+    typeof verifyOkBody.merchant?.sub_account_code === 'string' &&
+      verifyOkBody.merchant.sub_account_code.length > 0,
+    verifyOkBody.merchant?.sub_account_code,
+  );
+  check(
+    'verification is flagged as mock',
+    verifyOkBody.merchant?.verification_mode === 'mock',
+    verifyOkBody.merchant?.verification_mode,
+  );
+
+  // 8. Re-verifying an already-verified merchant is rejected
+  const reVerify = await fetch(`${BASE}/api/verification`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ id_type: 'BVN', id_number: '22212345678' }),
+  });
+  check('re-verifying an active merchant is rejected (409)', reVerify.status === 409, reVerify.status);
+
+  // 9. Failure path — a second merchant whose id fails the mock check (ends 0000)
+  const stamp2 = Date.now() + 1;
+  const email2 = `demo+${stamp2}@sprout.test`;
+  const phone2 = `081${String(10000000 + (stamp2 % 89999999))}`;
+  await fetch(`${BASE}/api/auth/register`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      business_name: 'Fail Store',
+      owner_name: 'Ben Demo',
+      phone: phone2,
+      email: email2,
+      password,
+    }),
+  });
+  const login2 = await fetch(`${BASE}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email: email2, password }),
+  });
+  const token2 = (await readBody<LoginResponse>(login2)).token ?? '';
+  const verifyFail = await fetch(`${BASE}/api/verification`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token2}` },
+    body: JSON.stringify({ id_type: 'NIN', id_number: '22212340000' }),
+  });
+  const verifyFailBody = await readBody<RegisterResponse>(verifyFail);
+  check('failed verification returns 200', verifyFail.status === 200, verifyFail.status);
+  check(
+    'failed merchant verification_status is "failed"',
+    verifyFailBody.merchant?.verification_status === 'failed',
+    verifyFailBody.merchant?.verification_status,
+  );
+  check(
+    'failed merchant is NOT active',
+    verifyFailBody.merchant?.status !== 'active',
+    verifyFailBody.merchant?.status,
+  );
+  check(
+    'failed verification stores a reviewable reason',
+    typeof verifyFailBody.merchant?.verification_reason === 'string' &&
+      verifyFailBody.merchant.verification_reason.length > 0,
+    verifyFailBody.merchant?.verification_reason,
+  );
+  check(
+    'failed merchant has no sub_account_code',
+    !verifyFailBody.merchant?.sub_account_code,
   );
 
   console.log(`\n${passed} passed, ${failed} failed`);

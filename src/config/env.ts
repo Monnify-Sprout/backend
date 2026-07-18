@@ -20,8 +20,17 @@ const envSchema = z.object({
   JWT_SECRET: z.string().min(16, 'JWT_SECRET must be at least 16 characters'),
   JWT_EXPIRES_IN: z.string().default('1h'),
 
-  // Present from Phase 2 onward; kept optional so Phase 1 can run without them.
+  // 'mock' (default) simulates Monnify's Live-Mode-only BVN/NIN check for local dev
+  // and the demo; 'live' calls the real API. See PRD §5.
   MONNIFY_VERIFICATION_MODE: z.enum(['live', 'mock']).default('mock'),
+
+  // Live Monnify integration — required ONLY when MONNIFY_VERIFICATION_MODE=live.
+  // Kept optional so mock mode boots without them; the live provider asserts their
+  // presence at call time.
+  MONNIFY_BASE_URL: z.string().url().optional(),
+  MONNIFY_API_KEY: z.string().optional(),
+  MONNIFY_SECRET_KEY: z.string().optional(),
+  MONNIFY_CONTRACT_CODE: z.string().optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);
