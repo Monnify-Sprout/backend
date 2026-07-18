@@ -83,8 +83,9 @@ picks the Monnify `incomeSplitConfig` split path vs the safe manual fallback
 Connected-account credential encryption needs `CREDENTIALS_ENCRYPTION_KEY`
 (32-byte hex; `src/lib/crypto.ts`).
 
-Monnify SANDBOX api key/secret/base URL are set in `.env` (2026-07-18); the
-contract code is still pending. Monnify signs webhooks with the secret key, so
-there is no separate webhook secret to obtain.
+Monnify SANDBOX credentials are complete in `.env` (2026-07-18): api key,
+secret key, contract code, base URL. Monnify signs webhooks with the secret
+key, so there is no separate webhook secret to obtain. The demo still runs on
+mock.
 
 Next: Phase 9a - seed script (Phase 8 is frontend-only).
