@@ -79,6 +79,36 @@ Authorization: Bearer {{token}}
 GET {{base}}/api/invoices/{{invoice.response.body.invoice.id}}
 Authorization: Bearer {{token}}
 
+### Connect an existing Monnify account (read-only; creds validated then encrypted)
+# Mock mode: any creds work unless api_key ends in "BAD" (deterministic failure).
+# @name connected
+POST {{base}}/api/connected-accounts
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "business_name": "External Shop",
+  "api_key": "MK_TEST_EXTERNAL",
+  "secret_key": "SK_TEST_EXTERNAL",
+  "contract_code": "1234567"
+}
+
+### List connected accounts (never returns credentials)
+GET {{base}}/api/connected-accounts
+Authorization: Bearer {{token}}
+
+### Sync a connected account's transaction history (idempotent)
+POST {{base}}/api/connected-accounts/{{connected.response.body.account.id}}/sync
+Authorization: Bearer {{token}}
+
+### Analytics — my own merchant data
+GET {{base}}/api/analytics?days=30
+Authorization: Bearer {{token}}
+
+### Analytics — a connected account (same response shape)
+GET {{base}}/api/analytics?connected_account_id={{connected.response.body.account.id}}&days=30
+Authorization: Bearer {{token}}
+
 ### Monnify collection webhook (no auth; HMAC-SHA512 of the RAW body in the
 ### monnify-signature header, keyed by MONNIFY_WEBHOOK_SECRET). The signature
 ### can't be hardcoded here — `npm run smoke` exercises this end to end.

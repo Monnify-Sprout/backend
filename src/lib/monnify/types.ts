@@ -69,6 +69,32 @@ export interface VerifyTransactionResult {
   paidAt?: string;
 }
 
+// ── Connected accounts (Phase 4) ────────────────────────────────────────────
+
+// A connected merchant's OWN Monnify credentials (PRD §7.6) — held in plaintext
+// only transiently, between decryption and the API call. Never logged.
+export interface ExternalCredentials {
+  apiKey: string;
+  secretKey: string;
+  contractCode: string;
+}
+
+export interface ValidateCredentialsResult {
+  ok: boolean;
+  reason?: string; // safe user-facing text; must never echo the credentials
+}
+
+// One transaction pulled from a connected account, normalised to what
+// external_transactions stores.
+export interface ExternalTransactionRecord {
+  reference: string;
+  amount: number;
+  currency: string;
+  paymentMethod: string | null;
+  customerName: string | null;
+  paidAt: string; // ISO timestamp
+}
+
 export interface MonnifyProvider {
   readonly mode: VerificationMode;
   verifyIdentity(input: VerifyIdentityInput): Promise<VerifyIdentityResult>;
@@ -77,4 +103,11 @@ export interface MonnifyProvider {
   verifyTransaction(
     transactionReference: string,
   ): Promise<VerifyTransactionResult>;
+  // Phase 4 — these authenticate with the SUPPLIED credentials, not Sprout's own.
+  validateExternalCredentials(
+    creds: ExternalCredentials,
+  ): Promise<ValidateCredentialsResult>;
+  searchExternalTransactions(
+    creds: ExternalCredentials,
+  ): Promise<ExternalTransactionRecord[]>;
 }

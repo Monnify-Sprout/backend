@@ -46,6 +46,14 @@ const envSchema = z.object({
     .enum(['true', 'false'])
     .default('false')
     .transform((v) => v === 'true'),
+
+  // Phase 4 — AES-256-GCM key for connected-account Monnify credentials at rest
+  // (32 bytes as 64 hex chars). Optional so earlier phases boot without it; the
+  // crypto lib asserts presence when a credential is actually (de)encrypted.
+  CREDENTIALS_ENCRYPTION_KEY: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/i, 'must be 32 bytes as 64 hex chars')
+    .optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);

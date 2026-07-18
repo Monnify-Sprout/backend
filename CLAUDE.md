@@ -44,8 +44,8 @@ This gates every merchant's onboarding, not one optional feature.
 
 ## Current phase
 
-Phases 1–3 **complete and verified end to end** against the live Supabase DB
-(`npm run smoke` → 40/40). Migrations in `migrations/` (`npm run migrate`).
+Phases 1–4 **complete and verified end to end** against the live Supabase DB
+(`npm run smoke` → 54/54). Migrations in `migrations/` (`npm run migrate`).
 
 Endpoints (all DB access via `pg`):
 - `POST /api/auth/register`, `POST /api/auth/login`, protected `GET /api/me`
@@ -55,15 +55,26 @@ Endpoints (all DB access via `pg`):
 - `POST /api/webhooks/monnify` — no auth; HMAC-SHA512 signature over the RAW body
   (captured in `index.ts`), idempotent via `payments.event_key`, confirms with
   Verify Transaction before marking Paid (never trusts the payload)
+- protected `POST /api/connected-accounts` (validate then AES-256-GCM-encrypt the
+  merchant's own Monnify creds — never logged/returned after creation),
+  `GET /api/connected-accounts`, `POST /api/connected-accounts/:id/sync`
+  (idempotent pull into `external_transactions`)
+- protected `GET /api/analytics[?connected_account_id][&days]` — ONE aggregation
+  SQL over a swappable base CTE (`src/modules/analytics/analytics.service.ts`), so
+  merchant and connected scopes return identical shapes (totals, trend,
+  day-of-week, amount ranges, payment-method mix)
 
 Monnify is behind a provider abstraction (`src/lib/monnify/`) selected by
 `MONNIFY_VERIFICATION_MODE`: `mock` (default; deterministic — BVN/NIN ending in
-`0000` fails; in-process ledger backs invoice/verify) vs `live` (real API, needs
-`MONNIFY_*` creds — un-testable in sandbox per PRD §5). Mock verifications are
-flagged in `merchants.verification_mode`.
+`0000` fails, external api_key ending in `BAD` fails, seeded 40-txn history per
+contract code) vs `live` (real API, needs `MONNIFY_*` creds — un-testable in
+sandbox per PRD §5). Mock verifications are flagged in
+`merchants.verification_mode`.
 
 Settlement: `SPROUT_COMMISSION_PERCENT` (default 1%); `MONNIFY_INVOICE_SPLIT_SUPPORTED`
 picks the Monnify `incomeSplitConfig` split path vs the safe manual fallback
 (PRD §7.3, still UNCONFIRMED). The split is recorded on every payment either way.
+Connected-account credential encryption needs `CREDENTIALS_ENCRYPTION_KEY`
+(32-byte hex; `src/lib/crypto.ts`).
 
-Next: Phase 4 — connected-account read-only analytics (PRD §7.6).
+Next: Phase 5 — frontend foundation.

@@ -5,11 +5,35 @@ import type {
   CreateInvoiceResult,
   CreateSubAccountInput,
   CreateSubAccountResult,
+  ExternalCredentials,
+  ExternalTransactionRecord,
   MonnifyProvider,
+  ValidateCredentialsResult,
   VerifyIdentityInput,
   VerifyIdentityResult,
   VerifyTransactionResult,
 } from './types';
+
+// Small deterministic PRNG (mulberry32) so a mock connected account always
+// yields the same transaction history — re-syncs must hit the same references.
+function seededRandom(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a += 0x6d2b79f5;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function seedFrom(text: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < text.length; i += 1) {
+    h = Math.imul(h ^ text.charCodeAt(i), 16777619);
+  }
+  return h >>> 0;
+}
 
 // Deterministic stand-in for Monnify's Live-Mode-only BVN/NIN verification, for
 // local dev and the hackathon demo. Its results are recorded with
@@ -93,5 +117,45 @@ export class MonnifyMockProvider implements MonnifyProvider {
       paymentMethod: 'ACCOUNT_TRANSFER',
       paidAt: new Date().toISOString(),
     });
+  }
+
+  validateExternalCredentials(
+    creds: ExternalCredentials,
+  ): Promise<ValidateCredentialsResult> {
+    // Demo rule: an API key ending in "BAD" fails so the rejection path can be
+    // shown on demand; anything else authenticates. Reason text is fixed — it
+    // must never echo the supplied credentials.
+    if (creds.apiKey.endsWith('BAD')) {
+      return Promise.resolve({
+        ok: false,
+        reason: 'Mock Monnify: could not authenticate with those credentials.',
+      });
+    }
+    return Promise.resolve({ ok: true });
+  }
+
+  searchExternalTransactions(
+    creds: ExternalCredentials,
+  ): Promise<ExternalTransactionRecord[]> {
+    // ~40 PAID transactions over the last 45 days, fully determined by the
+    // contract code — the same account always returns the same history.
+    const rand = seededRandom(seedFrom(creds.contractCode));
+    const methods = ['ACCOUNT_TRANSFER', 'CARD'];
+    const customers = ['Ngozi A.', 'Tunde O.', 'Amara E.', 'Yusuf I.', 'Bisi K.'];
+    const now = Date.now();
+    const records: ExternalTransactionRecord[] = [];
+    for (let i = 0; i < 40; i += 1) {
+      const daysAgo = Math.floor(rand() * 45);
+      const amount = Math.round((500 + rand() * 120_000) * 100) / 100;
+      records.push({
+        reference: `EXT-${creds.contractCode}-${String(i).padStart(3, '0')}`,
+        amount,
+        currency: 'NGN',
+        paymentMethod: methods[Math.floor(rand() * methods.length)] ?? null,
+        customerName: customers[Math.floor(rand() * customers.length)] ?? null,
+        paidAt: new Date(now - daysAgo * 86_400_000).toISOString(),
+      });
+    }
+    return Promise.resolve(records);
   }
 }

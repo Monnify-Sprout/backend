@@ -6,8 +6,11 @@ import type {
   CreateInvoiceResult,
   CreateSubAccountInput,
   CreateSubAccountResult,
+  ExternalCredentials,
+  ExternalTransactionRecord,
   MonnifyProvider,
   TransactionStatus,
+  ValidateCredentialsResult,
   VerifyIdentityInput,
   VerifyIdentityResult,
   VerifyTransactionResult,
@@ -258,6 +261,74 @@ export class MonnifyLiveProvider implements MonnifyProvider {
       paymentMethod: b.paymentMethod,
       paidAt: b.paidOn,
     };
+  }
+
+  // ── Connected accounts (Phase 4) — auth with the SUPPLIED creds, not ours ──
+
+  // Fresh token per call: connected-account creds vary per request, so Sprout's
+  // own token cache never applies here.
+  private async externalToken(creds: ExternalCredentials): Promise<string> {
+    const cfg = this.config();
+    const basic = Buffer.from(`${creds.apiKey}:${creds.secretKey}`).toString(
+      'base64',
+    );
+    const res = await fetch(`${cfg.baseUrl}/api/v1/auth/login`, {
+      method: 'POST',
+      headers: { authorization: `Basic ${basic}` },
+    });
+    const json = (await res.json()) as MonnifyEnvelope<AuthBody>;
+    if (!res.ok || !json.requestSuccessful || !json.responseBody?.accessToken) {
+      // Deliberately generic — must never echo the credentials.
+      throw new HttpError(
+        422,
+        'Could not authenticate with Monnify using the supplied credentials.',
+      );
+    }
+    return json.responseBody.accessToken;
+  }
+
+  async validateExternalCredentials(
+    creds: ExternalCredentials,
+  ): Promise<ValidateCredentialsResult> {
+    try {
+      await this.externalToken(creds);
+      return { ok: true };
+    } catch {
+      return {
+        ok: false,
+        reason: 'Could not authenticate with Monnify using the supplied credentials.',
+      };
+    }
+  }
+
+  async searchExternalTransactions(
+    creds: ExternalCredentials,
+  ): Promise<ExternalTransactionRecord[]> {
+    const cfg = this.config();
+    const token = await this.externalToken(creds);
+    const res = await fetch(
+      `${cfg.baseUrl}/api/v1/merchant/transactions/search?page=0&size=100`,
+      { headers: { authorization: `Bearer ${token}` } },
+    );
+    const json = (await res.json()) as MonnifyEnvelope<{
+      content?: TransactionBody[];
+    }>;
+    if (!res.ok || !json.requestSuccessful) {
+      throw new HttpError(
+        502,
+        `Monnify transaction search failed: ${json.responseMessage ?? res.status}`,
+      );
+    }
+    return (json.responseBody?.content ?? [])
+      .filter((t) => normaliseStatus(t.paymentStatus) === 'PAID')
+      .map((t) => ({
+        reference: t.transactionReference,
+        amount: Number(t.amountPaid ?? 0),
+        currency: t.currencyCode ?? 'NGN',
+        paymentMethod: t.paymentMethod ?? null,
+        customerName: null,
+        paidAt: t.paidOn ?? new Date().toISOString(),
+      }));
   }
 }
 

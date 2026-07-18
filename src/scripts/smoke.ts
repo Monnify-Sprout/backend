@@ -55,6 +55,25 @@ interface WebhookAck {
   received?: boolean;
   outcome?: string;
 }
+interface ConnectedAccountView {
+  id?: string;
+  status?: string;
+  business_name?: string;
+}
+interface ConnectResponse {
+  account?: ConnectedAccountView;
+}
+interface SyncResponse {
+  fetched?: number;
+  inserted?: number;
+  account?: ConnectedAccountView;
+}
+interface AnalyticsResponse {
+  scope?: { type?: string };
+  totals?: Record<string, unknown>;
+  trend?: unknown[];
+  [key: string]: unknown;
+}
 
 // Node's fetch types `.json()` as unknown; parse into a known shape.
 async function readBody<T>(res: Response): Promise<T> {
@@ -386,6 +405,136 @@ async function main(): Promise<void> {
     }),
   );
   check('invoice still paid after replay', afterReplay.invoice?.status === 'paid', afterReplay.invoice?.status);
+
+  // ── Phase 4: connected accounts + shared analytics (mock mode) ─────────────
+
+  // Distinctive credential values so we can assert they never appear anywhere.
+  const extApiKey = 'MK_TEST_EXTERNAL_ACCT_1';
+  const extSecret = 'SK_TEST_SUPERSECRET_XYZ9';
+  const extContract = `${(stamp % 9000000) + 1000000}`;
+
+  // 17. Bad credentials are rejected (mock: api key ending in "BAD")
+  const connBad = await fetch(`${BASE}/api/connected-accounts`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({
+      business_name: 'External Shop',
+      api_key: 'MK_TEST_BAD',
+      secret_key: extSecret,
+      contract_code: extContract,
+    }),
+  });
+  const connBadText = await connBad.text();
+  check('bad external creds are rejected (422)', connBad.status === 422, connBad.status);
+  check(
+    'rejection response does not echo the secret',
+    !connBadText.includes(extSecret) && !connBadText.includes('MK_TEST_BAD'),
+  );
+
+  // 18. Valid credentials connect; response contains no credential material
+  const connOk = await fetch(`${BASE}/api/connected-accounts`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({
+      business_name: 'External Shop',
+      api_key: extApiKey,
+      secret_key: extSecret,
+      contract_code: extContract,
+    }),
+  });
+  const connOkText = await connOk.text();
+  const connOkBody = JSON.parse(connOkText) as ConnectResponse;
+  const accountId = connOkBody.account?.id ?? '';
+  check('connect account returns 201', connOk.status === 201, connOk.status);
+  check(
+    'connect response contains no plaintext credentials',
+    !connOkText.includes(extApiKey) && !connOkText.includes(extSecret),
+  );
+  check(
+    'connect response has no credential ref fields',
+    !connOkText.includes('monnify_api_key_ref') &&
+      !connOkText.includes('monnify_secret_key_ref'),
+  );
+
+  // 19. Listing never exposes credentials either
+  const listConn = await fetch(`${BASE}/api/connected-accounts`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  const listConnText = await listConn.text();
+  check(
+    'account list contains no plaintext credentials',
+    listConn.status === 200 &&
+      !listConnText.includes(extApiKey) &&
+      !listConnText.includes(extSecret),
+  );
+
+  // 20. Sync pulls the account's history…
+  const sync1 = await readBody<SyncResponse>(
+    await fetch(`${BASE}/api/connected-accounts/${accountId}/sync`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}` },
+    }),
+  );
+  check(
+    'sync pulls external transactions',
+    (sync1.fetched ?? 0) > 0 && (sync1.inserted ?? 0) > 0,
+    sync1,
+  );
+  check('synced account status is "connected"', sync1.account?.status === 'connected', sync1.account?.status);
+
+  // 21. …and re-syncing is idempotent
+  const sync2 = await readBody<SyncResponse>(
+    await fetch(`${BASE}/api/connected-accounts/${accountId}/sync`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}` },
+    }),
+  );
+  check(
+    're-sync inserts nothing new (idempotent)',
+    sync2.fetched === sync1.fetched && sync2.inserted === 0,
+    sync2,
+  );
+
+  // 22. Shared analytics: merchant scope vs connected scope, SAME shape
+  const merchantAnalytics = await readBody<AnalyticsResponse>(
+    await fetch(`${BASE}/api/analytics`, {
+      headers: { authorization: `Bearer ${token}` },
+    }),
+  );
+  const connectedAnalytics = await readBody<AnalyticsResponse>(
+    await fetch(`${BASE}/api/analytics?connected_account_id=${accountId}`, {
+      headers: { authorization: `Bearer ${token}` },
+    }),
+  );
+  check(
+    'merchant analytics returns data',
+    merchantAnalytics.scope?.type === 'merchant' &&
+      Array.isArray(merchantAnalytics.trend),
+    merchantAnalytics.scope,
+  );
+  check(
+    'connected analytics returns data',
+    connectedAnalytics.scope?.type === 'connected_account' &&
+      (connectedAnalytics.trend?.length ?? 0) > 0,
+    connectedAnalytics.scope,
+  );
+  const keysOf = (o: object): string => Object.keys(o).sort().join(',');
+  check(
+    'both scopes return the SAME top-level shape',
+    keysOf(merchantAnalytics) === keysOf(connectedAnalytics),
+    { merchant: keysOf(merchantAnalytics), connected: keysOf(connectedAnalytics) },
+  );
+  check(
+    'both scopes return the SAME totals shape',
+    keysOf(merchantAnalytics.totals ?? {}) === keysOf(connectedAnalytics.totals ?? {}),
+  );
+
+  // 23. Ownership: another merchant cannot read this connected account
+  const foreign = await fetch(
+    `${BASE}/api/analytics?connected_account_id=${accountId}`,
+    { headers: { authorization: `Bearer ${token2}` } },
+  );
+  check("another merchant's analytics access is rejected (404)", foreign.status === 404, foreign.status);
 
   console.log(`\n${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);
