@@ -51,7 +51,12 @@ Endpoints (all DB access via `pg`):
 - `POST /api/auth/register`, `POST /api/auth/login`, protected `GET /api/me`
 - protected `POST /api/verification` - BVN/NIN → verify → create sub-account → `active`
 - protected `POST /api/invoices` (create Dynamic Invoice), `GET /api/invoices`,
-  `GET /api/invoices/:id` (invoice + payment/settlement)
+  `GET /api/invoices/:id` (invoice + payment/settlement). An invoice is a
+  required `item` plus optional `notes` (migration 0004 split the old
+  `description`); the buyer needs at least one of name/phone/email/social handle
+  (name is NOT required - social-commerce buyers may be just a handle), enforced
+  by a zod refine and a DB CHECK. Monnify's description is composed from
+  item+notes and its required customerName falls back through handle/phone.
 - `POST /api/webhooks/monnify` - no auth; HMAC-SHA512 signature over the RAW body
   (captured in `index.ts`), idempotent via `payments.event_key`, confirms with
   Verify Transaction before marking Paid (never trusts the payload)
