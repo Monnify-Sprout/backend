@@ -5,9 +5,12 @@ import { HttpError } from '../middleware/error';
 import { analyticsRouter } from '../modules/analytics/analytics.routes';
 import { authRouter } from '../modules/auth/auth.routes';
 import { findMerchantById } from '../modules/auth/auth.repo';
+import { categoryRouter } from '../modules/categories/categories.routes';
 import { connectedRouter } from '../modules/connected/connected.routes';
 import { invoiceRouter } from '../modules/invoices/invoice.routes';
 import { publicInvoiceRouter } from '../modules/invoices/public.routes';
+import { paymentLinkRouter } from '../modules/payment-links/payment-links.routes';
+import { publicPaymentLinkRouter } from '../modules/payment-links/public.routes';
 import { verificationRouter } from '../modules/verification/verification.routes';
 import { webhookRouter } from '../modules/webhooks/webhook.routes';
 
@@ -16,7 +19,10 @@ export const apiRouter = Router();
 apiRouter.use('/auth', authRouter);
 apiRouter.use('/verification', verificationRouter);
 apiRouter.use('/invoices', invoiceRouter);
+apiRouter.use('/payment-links', paymentLinkRouter);
+apiRouter.use('/categories', categoryRouter);
 apiRouter.use('/public', publicInvoiceRouter); // unauthenticated, safe subset
+apiRouter.use('/public', publicPaymentLinkRouter); // unauthenticated, safe subset
 apiRouter.use('/webhooks', webhookRouter);
 apiRouter.use('/connected-accounts', connectedRouter);
 apiRouter.use('/analytics', analyticsRouter);

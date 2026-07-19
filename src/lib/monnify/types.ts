@@ -58,6 +58,24 @@ export interface CreateInvoiceResult {
   checkoutUrl: string;
 }
 
+// ── Reserved (permanent) accounts (Phase 12) ────────────────────────────────
+
+// A reserved account backs a static payment link: one permanent account number
+// (and reusable checkout URL) that keeps accepting many payments over its life.
+export interface CreateReservedAccountInput {
+  accountReference: string; // our own reference (Monnify echoes it back on webhooks)
+  accountName: string; // shown on the buyer's transfer (e.g. the link title)
+  customerName: string;
+  customerEmail: string;
+}
+
+export interface CreateReservedAccountResult {
+  accountReference: string;
+  reservedAccountNumber: string;
+  bankName?: string;
+  checkoutUrl: string;
+}
+
 export type TransactionStatus = 'PAID' | 'PENDING' | 'FAILED' | 'UNKNOWN';
 
 export interface VerifyTransactionResult {
@@ -100,6 +118,10 @@ export interface MonnifyProvider {
   verifyIdentity(input: VerifyIdentityInput): Promise<VerifyIdentityResult>;
   createSubAccount(input: CreateSubAccountInput): Promise<CreateSubAccountResult>;
   createInvoice(input: CreateInvoiceInput): Promise<CreateInvoiceResult>;
+  // Phase 12 - a permanent account backing a reusable static payment link.
+  createReservedAccount(
+    input: CreateReservedAccountInput,
+  ): Promise<CreateReservedAccountResult>;
   verifyTransaction(
     transactionReference: string,
   ): Promise<VerifyTransactionResult>;

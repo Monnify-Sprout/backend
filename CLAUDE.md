@@ -44,8 +44,11 @@ This gates every merchant's onboarding, not one optional feature.
 
 ## Current phase
 
-Phases 1–8 **complete and verified end to end** against the live Supabase DB
-(`npm run smoke` → 74/74). Migrations in `migrations/` (`npm run migrate`).
+Phases 1–8 plus Phase 10 (analytics deepening), Phase 11 (categories) and
+Phase 12 (static payment links) **complete and verified end to end** against the
+live Supabase DB (`npm run smoke` → 114/114). Migrations in `migrations/`
+(`npm run migrate`; Phase 10 added none, Phase 11 added `0007_categories.sql`,
+Phase 12 added `0008_payment_links.sql`).
 
 Endpoints (all DB access via `pg`):
 - `POST /api/auth/register`, `POST /api/auth/login`, protected `GET /api/me`
@@ -53,8 +56,11 @@ Endpoints (all DB access via `pg`):
   `active`. Also REQUIRES the merchant's settlement bank account (bank code +
   NUBAN, names optional; migration 0005), stored on the merchant and passed to
   Create-Sub-Account (DECIDED 2026-07-18; mock ignores it for its stub code)
-- protected `POST /api/invoices` (create Dynamic Invoice), `GET /api/invoices`,
-  `GET /api/invoices/:id` (invoice + payment/settlement). An invoice is a
+- protected `POST /api/invoices` (create Dynamic Invoice), `GET /api/invoices`
+  (the merchant list joins the payment to expose `paid_at` per invoice - added in
+  Phase 10 for the dashboard "date paid" column + filter; kept out of the shared
+  INVOICE_COLUMNS and the public subset), `GET /api/invoices/:id` (invoice +
+  payment/settlement). An invoice is a
   required `item` plus optional `notes` (migration 0004 split the old
   `description`); the buyer needs at least one of name/phone/email/social handle
   (name is NOT required - social-commerce buyers may be just a handle), enforced
@@ -62,10 +68,38 @@ Endpoints (all DB access via `pg`):
   `customer_social_platform` (migration 0006; free text - known keys
   instagram/whatsapp/facebook/snapchat or a merchant-typed "Other"), stored only
   when a handle is present. Monnify's description is composed from item+notes and
-  its required customerName falls back through handle/phone.
+  its required customerName falls back through handle/phone. An invoice may also
+  carry an optional `category_id` (Phase 11) - validated to belong to the
+  merchant at create time; the list/detail queries join the category to expose
+  `category_name`/`category_color` (kept out of INVOICE_COLUMNS + the public subset).
+- protected `GET/POST /api/categories`, `PATCH/DELETE /api/categories/:id`
+  (Phase 11; `src/modules/categories/`) - merchant-owned name + `#rrggbb` colour,
+  case-insensitively unique per merchant (409 on a duplicate). The list carries a
+  per-category `invoice_count`. Deleting a category un-categorises its invoices
+  (`invoices.category_id` is ON DELETE SET NULL), never deletes them.
+- protected `GET/POST /api/payment-links`, `GET /api/payment-links/:id`,
+  `PATCH /api/payment-links/:id/status`, `POST /api/payment-links/:id/simulate-collection`
+  (Phase 12; `src/modules/payment-links/`) - reusable, long-lived links that take
+  MANY payments ("collections"), a distinct entity from one-time invoices. A link
+  has a title + optional item, an OPTIONAL amount (null = buyer enters it), an
+  optional `category_id`, and a lifecycle `active` -> `paused` (reversible) ->
+  `ended` (terminal; the service rejects reopening an ended link). Each link is
+  backed by a Monnify RESERVED (permanent) account (`createReservedAccount` on the
+  provider). Collections live in their own `link_payments` table (migration 0008)
+  so every invoice query stays untouched; the list carries per-link
+  collection_count / total_collected / last_paid_at and a status-count summary,
+  the detail carries stats + the collections. `simulate-collection` is a
+  demo/testing affordance gated to mock mode (registers a mock ledger txn, then
+  drives the real webhook path). PUBLIC `GET /api/public/links/:slug` mirrors the
+  public invoice lookup (safe subset; payment channels withheld unless active).
 - `POST /api/webhooks/monnify` - no auth; HMAC-SHA512 signature over the RAW body
   (captured in `index.ts`), idempotent via `payments.event_key`, confirms with
-  Verify Transaction before marking Paid (never trusts the payload)
+  Verify Transaction before marking Paid (never trusts the payload). ONE callback
+  shape serves two products: it tries an invoice first (txn/invoice reference),
+  else a static payment link (matched by the reserved account reference); a link
+  collection is recorded in `link_payments` (idempotent on its own event_key,
+  split recorded, whatever amount was actually paid - a link has no single
+  expected amount).
 - PUBLIC `GET /api/public/invoices/:reference` (Phase 7, no auth) - buyer-facing
   safe subset: business name + invoice basics; payment channels nulled unless
   `pending`; minimal payment info when paid; never customer email, merchant
@@ -80,8 +114,22 @@ Endpoints (all DB access via `pg`):
   pulled history via FK cascade, owner-scoped)
 - protected `GET /api/analytics[?connected_account_id][&days]` - ONE aggregation
   SQL over a swappable base CTE (`src/modules/analytics/analytics.service.ts`), so
-  merchant and connected scopes return identical shapes (totals, trend,
-  day-of-week, amount ranges, payment-method mix)
+  merchant and connected scopes return identical shapes. Phase 10 widened the base
+  rows (customer/item/settlement/commission alongside ts/amount/method) and the
+  response: totals now carry largest_amount, unique_customers, net_amount
+  (settled) and fees_amount (Sprout commission); breakdowns add time_of_day and
+  top_customers; and there is MERCHANT-ONLY depth that is `null` for a connected
+  account - `top_items` (best sellers), `by_category` (Phase 11: sales grouped by
+  the merchant's categories, each row carrying the category colour, with an
+  "Uncategorised" bucket) and a `funnel` (of invoices CREATED in the window:
+  paid/outstanding/overdue/cancelled split, collection rate by count and value,
+  avg hours-to-payment). The funnel is windowed on `invoices.created_at`, a
+  different window than the money view (paid_at) - see the file's comments.
+  Phase 12: the MERCHANT base is now a UNION of paid invoices AND static-link
+  collections, so every metric (totals/trend/methods/customers/ranges/times)
+  counts both; each base row carries a `link` column (the link title for a
+  collection, null for an invoice) mirroring `item`, so top_items stays
+  invoice-only and a new merchant-only `by_link` breakdown stays link-only.
 
 Monnify is behind a provider abstraction (`src/lib/monnify/`) selected by
 `MONNIFY_VERIFICATION_MODE`: `mock` (default; deterministic - BVN/NIN ending in
@@ -108,6 +156,31 @@ invoices (paid/pending/overdue, paid ones backdated across ~3 weeks for a real
 trend, transfer/card mix), and a second contract ("Lagos Beauty Hub") connected
 + synced. Requires MONNIFY_VERIFICATION_MODE=mock (it fabricates paid invoices
 and deterministic connected history, which only the mock provider can produce).
+Phase 11 added 4 demo categories assigned across the seed invoices (one paid
+invoice left uncategorised on purpose); the seed also BACKFILLS categories onto
+already-seeded invoices by item match, so re-running it converges a pre-Phase-11
+demo without recreating anything.
 
-Next: nothing outstanding on the backend for the hackathon path. Roadmap Phase 10
-(categories) is the next feature if pursued.
+Phase 10 (analytics deepening) **complete** (2026-07-19): richer analytics with
+no migration (see the `/api/analytics` bullet above) and `paid_at` on the
+merchant invoice list. Smoke grew two checks (merchant carries funnel + top_items;
+connected nulls both) -> 76/76.
+
+Phase 11 (categories) **complete** (2026-07-19): merchant-defined categories
+(name + colour) via `src/modules/categories/`, `invoices.category_id`
+(migration 0007), and a merchant-only `by_category` breakdown in the one analytics
+engine (null for a connected account, like top_items/funnel). Smoke -> 90/90.
+
+Phase 12 (static payment links) **complete** (2026-07-20): reusable links backed
+by Monnify reserved accounts (`src/modules/payment-links/`, migration 0008 adds
+`payment_links` + `link_payments`). The webhook routes reserved-account
+collections to `link_payments` (idempotent, verify-before-record, split per
+collection). Analytics now unions link collections into the merchant base and adds
+a merchant-only `by_link` breakdown. The provider abstraction gained
+`createReservedAccount` (mock deterministic; live structurally complete, gated).
+The seed adds 4 demo links (fixed + buyer-entered; active/paused/ended) with 10
+backdated collections; a mock-only `simulate-collection` action drives the real
+webhook path. Smoke -> 114/114.
+
+Next: nothing outstanding on the backend for the hackathon path. Merchant branches
+(Phase 13) is the remaining optional roadmap follow-up.

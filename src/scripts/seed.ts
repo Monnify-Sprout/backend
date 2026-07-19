@@ -4,12 +4,19 @@ import { env } from '../config/env';
 import { pool, query } from '../lib/db';
 import { findMerchantByEmail, type MerchantRow } from '../modules/auth/auth.repo';
 import { registerMerchant } from '../modules/auth/auth.service';
+import { createCategory, listCategories } from '../modules/categories/categories.service';
 import {
   connectAccount,
   syncConnectedAccount,
 } from '../modules/connected/connected.service';
 import { listConnectedAccounts } from '../modules/connected/connected.repo';
 import { createInvoice } from '../modules/invoices/invoice.service';
+import { listPaymentLinksForMerchant } from '../modules/payment-links/payment-links.repo';
+import {
+  createPaymentLink,
+  setPaymentLinkStatus,
+  simulateLinkCollection,
+} from '../modules/payment-links/payment-links.service';
 import { verifyMerchantIdentity } from '../modules/verification/verification.service';
 import { processMonnifyWebhook } from '../modules/webhooks/webhook.service';
 
@@ -65,6 +72,16 @@ const CONNECTED_ACCOUNT = {
 
 type PaymentMethod = 'ACCOUNT_TRANSFER' | 'CARD';
 
+// Merchant categories (Phase 11): name + display colour. Assigned to seed
+// invoices below so the demo's category breakdown has real volume. One paid
+// invoice is left uncategorised on purpose, to show the "Uncategorised" slice.
+const SEED_CATEGORIES: { name: string; color: string }[] = [
+  { name: 'Fabric', color: '#16a34a' },
+  { name: 'Ready-to-wear', color: '#6366f1' },
+  { name: 'Custom orders', color: '#a855f7' },
+  { name: 'Accessories', color: '#f59e0b' },
+];
+
 interface InvoiceSpec {
   customer_name?: string;
   customer_phone?: string;
@@ -78,6 +95,7 @@ interface InvoiceSpec {
   method?: PaymentMethod; // only for paid
   daysAgo: number; // how far back created (and, for paid, settled)
   dueInDays?: number; // due date relative to today (negative = past)
+  category?: string; // one of SEED_CATEGORIES' names; omitted = uncategorised
 }
 
 // A realistic Nigerian social-commerce mix: amounts hit every analytics bucket,
@@ -94,6 +112,7 @@ const SEED_INVOICES: InvoiceSpec[] = [
     status: 'paid',
     method: 'ACCOUNT_TRANSFER',
     daysAgo: 22,
+    category: 'Fabric',
   },
   {
     customer_name: 'Ngozi Ade',
@@ -106,6 +125,7 @@ const SEED_INVOICES: InvoiceSpec[] = [
     status: 'paid',
     method: 'CARD',
     daysAgo: 19,
+    category: 'Custom orders',
   },
   {
     customer_social_handle: '@tunde.wears',
@@ -115,6 +135,7 @@ const SEED_INVOICES: InvoiceSpec[] = [
     status: 'paid',
     method: 'ACCOUNT_TRANSFER',
     daysAgo: 16,
+    category: 'Ready-to-wear',
   },
   {
     customer_name: 'Amara Eze',
@@ -123,6 +144,7 @@ const SEED_INVOICES: InvoiceSpec[] = [
     status: 'paid',
     method: 'CARD',
     daysAgo: 13,
+    category: 'Accessories',
   },
   {
     customer_name: 'Bisi Kola',
@@ -133,6 +155,7 @@ const SEED_INVOICES: InvoiceSpec[] = [
     status: 'paid',
     method: 'ACCOUNT_TRANSFER',
     daysAgo: 9,
+    category: 'Ready-to-wear',
   },
   {
     customer_name: 'Yusuf Ibrahim',
@@ -142,6 +165,7 @@ const SEED_INVOICES: InvoiceSpec[] = [
     status: 'paid',
     method: 'CARD',
     daysAgo: 6,
+    category: 'Custom orders',
   },
   {
     customer_name: 'Chinwe Obi',
@@ -152,6 +176,7 @@ const SEED_INVOICES: InvoiceSpec[] = [
     status: 'paid',
     method: 'ACCOUNT_TRANSFER',
     daysAgo: 3,
+    // left uncategorised on purpose (shows the "Uncategorised" breakdown slice)
   },
   {
     customer_name: 'Zainab Musa',
@@ -162,6 +187,7 @@ const SEED_INVOICES: InvoiceSpec[] = [
     status: 'pending',
     daysAgo: 2,
     dueInDays: 5,
+    category: 'Custom orders',
   },
   {
     customer_name: 'Emeka Nwosu',
@@ -171,6 +197,7 @@ const SEED_INVOICES: InvoiceSpec[] = [
     status: 'pending',
     daysAgo: 1,
     dueInDays: 9,
+    category: 'Ready-to-wear',
   },
   {
     customer_name: 'Kelechi Nnamdi',
@@ -179,6 +206,75 @@ const SEED_INVOICES: InvoiceSpec[] = [
     status: 'expired',
     daysAgo: 8,
     dueInDays: -4,
+    category: 'Fabric',
+  },
+];
+
+// Static payment links (Phase 12): reusable links that take many "collections".
+// A spread of statuses (active/paused/ended) populates the status cards, a mix
+// of fixed and buyer-entered pricing shows both link kinds, and backdated
+// collections give the per-link and general analytics real volume.
+interface LinkCollectionSpec {
+  customer: string;
+  amount?: number; // required only for a buyer-entered (null-amount) link
+  method: PaymentMethod;
+  daysAgo: number;
+}
+interface LinkSpec {
+  title: string;
+  item: string;
+  amount: number | null; // null = buyer enters the amount
+  category?: string;
+  status: 'active' | 'paused' | 'ended';
+  collections: LinkCollectionSpec[];
+}
+
+const SEED_LINKS: LinkSpec[] = [
+  {
+    title: 'Ankara fabric bundle',
+    item: '6 yards premium ankara',
+    amount: 15000,
+    category: 'Fabric',
+    status: 'active',
+    collections: [
+      { customer: 'Ngozi Ade', method: 'ACCOUNT_TRANSFER', daysAgo: 12 },
+      { customer: 'Tunde Bello', method: 'CARD', daysAgo: 7 },
+      { customer: 'Amara Eze', method: 'ACCOUNT_TRANSFER', daysAgo: 2 },
+    ],
+  },
+  {
+    title: 'Support the tailoring class',
+    item: 'Weekend beginner sewing class',
+    amount: null, // buyer enters what they want to give
+    category: 'Custom orders',
+    status: 'active',
+    collections: [
+      { customer: 'Bisi Kola', amount: 5000, method: 'CARD', daysAgo: 9 },
+      { customer: 'Yusuf Ibrahim', amount: 7500, method: 'ACCOUNT_TRANSFER', daysAgo: 4 },
+      { customer: 'Chinwe Obi', amount: 12000, method: 'CARD', daysAgo: 1 },
+    ],
+  },
+  {
+    title: 'Eid ready-to-wear promo',
+    item: 'Eid special (navy senator)',
+    amount: 25000,
+    category: 'Ready-to-wear',
+    status: 'paused',
+    collections: [
+      { customer: 'Zainab Musa', method: 'ACCOUNT_TRANSFER', daysAgo: 15 },
+      { customer: 'Emeka Nwosu', method: 'CARD', daysAgo: 11 },
+    ],
+  },
+  {
+    title: 'Launch week discount',
+    item: 'Accessory gift box',
+    amount: 8000,
+    category: 'Accessories',
+    status: 'ended',
+    collections: [
+      { customer: 'Kelechi Nnamdi', method: 'ACCOUNT_TRANSFER', daysAgo: 24 },
+      { customer: 'Fatima Sani', method: 'CARD', daysAgo: 21 },
+    ],
   },
 ];
 
@@ -220,7 +316,54 @@ async function ensureDemoMerchant(): Promise<MerchantRow> {
   return merchant;
 }
 
-async function seedInvoices(merchantId: string): Promise<void> {
+// Ensure every SEED_CATEGORIES row exists for the merchant and return a
+// name -> id map. Idempotent: it lists existing categories first and only
+// creates the missing ones, so a re-run adds nothing.
+async function ensureCategories(merchantId: string): Promise<Map<string, string>> {
+  const existing = await listCategories(merchantId);
+  const byName = new Map(existing.map((c) => [c.name, c.id]));
+  let created = 0;
+  for (const spec of SEED_CATEGORIES) {
+    if (byName.has(spec.name)) continue;
+    const category = await createCategory(merchantId, spec);
+    byName.set(category.name, category.id);
+    created += 1;
+  }
+  log(
+    created > 0
+      ? `ensured ${SEED_CATEGORIES.length} categories (${created} new)`
+      : `${SEED_CATEGORIES.length} categories already present`,
+  );
+  return byName;
+}
+
+// Assign categories to any already-seeded invoices that predate them (matching
+// on item), only where the invoice is still uncategorised. Keeps a re-run of the
+// seed self-healing: a merchant seeded before Phase 11 converges to the intended
+// category assignments without recreating any invoices.
+async function backfillInvoiceCategories(
+  merchantId: string,
+  categoryIds: Map<string, string>,
+): Promise<void> {
+  let updated = 0;
+  for (const spec of SEED_INVOICES) {
+    if (!spec.category) continue;
+    const id = categoryIds.get(spec.category);
+    if (!id) continue;
+    const rows = await query(
+      `update invoices set category_id = $3
+        where merchant_id = $1 and item = $2 and category_id is null
+        returning id`,
+      [merchantId, spec.item, id],
+    );
+    updated += rows.length;
+  }
+  if (updated > 0) log(`backfilled categories onto ${updated} existing invoice(s)`);
+}
+
+async function seedInvoices(merchantId: string): Promise<Map<string, string>> {
+  const categoryIds = await ensureCategories(merchantId);
+
   // Idempotency marker: the first seed item is distinctive enough to tell a
   // seeded merchant from a fresh one, so a re-run adds nothing.
   const marker = SEED_INVOICES[0]!.item;
@@ -229,8 +372,9 @@ async function seedInvoices(merchantId: string): Promise<void> {
     [merchantId, marker],
   );
   if (already.length > 0) {
-    log('demo invoices already seeded - skipping');
-    return;
+    log('demo invoices already seeded - skipping creation');
+    await backfillInvoiceCategories(merchantId, categoryIds);
+    return categoryIds;
   }
 
   let paid = 0;
@@ -250,6 +394,7 @@ async function seedInvoices(merchantId: string): Promise<void> {
       notes: spec.notes,
       amount: spec.amount,
       due_date: dueDate,
+      category_id: spec.category ? categoryIds.get(spec.category) : undefined,
     });
 
     const ts = daysAgoIso(spec.daysAgo);
@@ -297,6 +442,73 @@ async function seedInvoices(merchantId: string): Promise<void> {
   log(
     `created ${SEED_INVOICES.length} invoices (${paid} paid, ${pending} pending, ${expired} overdue)`,
   );
+  return categoryIds;
+}
+
+async function seedPaymentLinks(
+  merchantId: string,
+  categoryIds: Map<string, string>,
+): Promise<void> {
+  // Idempotency marker: the first link's title tells a seeded merchant from a
+  // fresh one, so a re-run adds nothing.
+  const marker = SEED_LINKS[0]!.title;
+  const existing = await listPaymentLinksForMerchant(merchantId);
+  if (existing.some((l) => l.title === marker)) {
+    log('demo payment links already seeded - skipping creation');
+    return;
+  }
+
+  let links = 0;
+  let collections = 0;
+  for (const spec of SEED_LINKS) {
+    const link = await createPaymentLink(merchantId, {
+      title: spec.title,
+      item: spec.item,
+      amount: spec.amount ?? undefined,
+      category_id: spec.category ? categoryIds.get(spec.category) : undefined,
+    });
+    links += 1;
+
+    for (const c of spec.collections) {
+      const outcome = await simulateLinkCollection(merchantId, link.id, {
+        amount: c.amount,
+        customer_name: c.customer,
+      });
+      if (outcome.outcome !== 'processed') {
+        throw new Error(
+          `expected a collection on "${spec.title}", got "${outcome.outcome}"`,
+        );
+      }
+      // Backdate the collection just created (newest for this link) so both the
+      // link's own trend and the merchant's general analytics span multiple days,
+      // and vary the method (the mock always reports ACCOUNT_TRANSFER).
+      const ts = daysAgoIso(c.daysAgo);
+      await query(
+        `update link_payments set paid_at = $2, created_at = $2, payment_method = $3
+          where id = (select id from link_payments
+                        where payment_link_id = $1
+                        order by created_at desc limit 1)`,
+        [link.id, ts, c.method],
+      );
+      collections += 1;
+    }
+
+    // Align the link's own created_at with its earliest collection for realistic
+    // list ordering, then apply its final status (paused / ended).
+    const earliest = Math.max(...spec.collections.map((c) => c.daysAgo), 0);
+    await query('update payment_links set created_at = $2 where id = $1', [
+      link.id,
+      daysAgoIso(earliest + 1),
+    ]);
+    if (spec.status !== 'active') {
+      await setPaymentLinkStatus(merchantId, link.id, spec.status);
+    }
+  }
+
+  log(
+    `created ${links} payment links with ${collections} collections ` +
+      '(active / paused / ended, fixed + buyer-entered)',
+  );
 }
 
 async function seedConnectedAccount(merchantId: string): Promise<void> {
@@ -329,7 +541,8 @@ async function main(): Promise<void> {
   console.log('Seeding Sprout demo data (PRD v2.0 §13)...\n');
 
   const merchant = await ensureDemoMerchant();
-  await seedInvoices(merchant.id);
+  const categoryIds = await seedInvoices(merchant.id);
+  await seedPaymentLinks(merchant.id, categoryIds);
   await seedConnectedAccount(merchant.id);
 
   console.log('\nDone. Demo login:');

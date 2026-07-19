@@ -5,6 +5,7 @@ import { getMonnifyProvider } from '../../lib/monnify';
 import { computeSplit, round2 } from '../../lib/money';
 import { HttpError } from '../../middleware/error';
 import { findMerchantById } from '../auth/auth.repo';
+import { assertOwnedCategory } from '../categories/categories.service';
 
 import { insertInvoice, type PublicInvoice, type SettlementPath } from './invoice.repo';
 import type { CreateInvoiceInput } from './invoice.schema';
@@ -32,6 +33,9 @@ export async function createInvoice(
   if (merchant.status !== 'active' || !merchant.sub_account_code) {
     throw new HttpError(403, 'Complete BVN/NIN verification before creating invoices.');
   }
+
+  // If a category was chosen, it must be one of this merchant's own (Phase 11).
+  await assertOwnedCategory(merchantId, input.category_id);
 
   const amount = round2(input.amount);
   const { commission, settlement } = computeSplit(amount, env.SPROUT_COMMISSION_PERCENT);
@@ -94,6 +98,7 @@ export async function createInvoice(
     amount,
     currency: 'NGN',
     dueDate: input.due_date ?? null,
+    categoryId: input.category_id ?? null,
     transactionReference: created.transactionReference,
     virtualAccountNumber: created.virtualAccountNumber,
     checkoutUrl: created.checkoutUrl,

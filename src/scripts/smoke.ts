@@ -45,6 +45,21 @@ interface InvoiceView {
   monnify_transaction_reference?: string | null;
   settlement_path?: string | null;
   amount?: string;
+  category_id?: string | null;
+  category_name?: string | null;
+  category_color?: string | null;
+}
+interface CategoryView {
+  id?: string;
+  name?: string;
+  color?: string;
+  invoice_count?: number;
+}
+interface CategoryResponse {
+  category?: CategoryView;
+}
+interface CategoryListResponse {
+  categories?: CategoryView[];
 }
 interface PaymentView {
   settlement_amount?: string | null;
@@ -95,7 +110,74 @@ interface AnalyticsResponse {
   scope?: { type?: string };
   totals?: Record<string, unknown>;
   trend?: unknown[];
+  top_items?: unknown[] | null;
+  by_category?: Array<{ category?: string; color?: string | null }> | null;
+  by_link?: Array<{ link?: string }> | null;
+  funnel?: Record<string, unknown> | null;
   [key: string]: unknown;
+}
+
+interface PaymentLinkView {
+  id?: string;
+  title?: string;
+  slug?: string;
+  amount?: string | null;
+  status?: string;
+  category_name?: string | null;
+  reserved_account_reference?: string | null;
+  reserved_account_number?: string | null;
+  reserved_account_bank_name?: string | null;
+  checkout_url?: string | null;
+  collection_count?: number;
+  total_collected?: string;
+}
+interface PaymentLinkCreateResponse {
+  link?: PaymentLinkView;
+}
+interface PaymentLinkListResponse {
+  links?: PaymentLinkView[];
+  summary?: {
+    total?: number;
+    active?: number;
+    paused?: number;
+    ended?: number;
+    total_collected?: number;
+  };
+}
+interface LinkPaymentView {
+  amount?: string;
+  settlement_amount?: string | null;
+  commission_amount?: string | null;
+  customer_name?: string | null;
+}
+interface PaymentLinkDetailResponse {
+  link?: PaymentLinkView;
+  stats?: {
+    collection_count?: number;
+    total_collected?: number;
+    average_amount?: number;
+    last_paid_at?: string | null;
+  };
+  collections?: LinkPaymentView[];
+}
+interface PublicLinkView {
+  slug?: string;
+  business_name?: string;
+  title?: string;
+  amount?: string | null;
+  status?: string;
+  reserved_account_number?: string | null;
+  reserved_account_bank_name?: string | null;
+  checkout_url?: string | null;
+}
+interface PublicLinkResponse {
+  link?: PublicLinkView;
+}
+interface SimulateResponse {
+  outcome?: string;
+  amount?: number;
+  transaction_reference?: string;
+  payment_reference?: string;
 }
 
 // Node's fetch types `.json()` as unknown; parse into a known shape.
@@ -397,7 +479,42 @@ async function main(): Promise<void> {
     handleOnlyBody.invoice?.customer_name,
   );
 
-  // 11. Active merchant creates a Dynamic Invoice
+  // ── Phase 11: categories ───────────────────────────────────────────────────
+
+  // 10d. Create a category, and prove duplicate names + bad colours are rejected.
+  const catCreate = await fetch(`${BASE}/api/categories`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ name: 'Fabric', color: '#16a34a' }),
+  });
+  const catCreateBody = await readBody<CategoryResponse>(catCreate);
+  const categoryId = catCreateBody.category?.id ?? '';
+  check('category creation returns 201', catCreate.status === 201, catCreate.status);
+  check(
+    'created category has an id and colour',
+    categoryId.length > 0 && catCreateBody.category?.color === '#16a34a',
+    catCreateBody.category,
+  );
+
+  const catDup = await fetch(`${BASE}/api/categories`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ name: 'fabric', color: '#0ea5e9' }), // same name, other case
+  });
+  check('duplicate category name is rejected (409)', catDup.status === 409, catDup.status);
+
+  const catBadColor = await fetch(`${BASE}/api/categories`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ name: 'Accessories', color: 'green' }),
+  });
+  check(
+    'category with an invalid colour is rejected (422)',
+    catBadColor.status === 422,
+    catBadColor.status,
+  );
+
+  // 11. Active merchant creates a Dynamic Invoice (tagged with the category)
   const invAmount = 15000;
   const createInv = await fetch(`${BASE}/api/invoices`, {
     method: 'POST',
@@ -408,6 +525,7 @@ async function main(): Promise<void> {
       notes: '3 yards of ankara',
       amount: invAmount,
       due_date: '2026-12-31',
+      category_id: categoryId,
     }),
   });
   const createInvBody = await readBody<InvoiceCreateResponse>(createInv);
@@ -434,6 +552,51 @@ async function main(): Promise<void> {
     typeof createInvBody.settlement?.settlement_amount === 'number' &&
       createInvBody.settlement.settlement_amount < invAmount,
     createInvBody.settlement,
+  );
+  check('invoice stores its category', invoice?.category_id === categoryId, invoice?.category_id);
+
+  // 11a. An invoice referencing a category the merchant does not own is rejected.
+  const invUnknownCat = await fetch(`${BASE}/api/invoices`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({
+      customer_name: 'No Cat',
+      item: 'Order #99',
+      amount: 1000,
+      category_id: '00000000-0000-0000-0000-000000000000',
+    }),
+  });
+  check(
+    'invoice with an unowned category is rejected (422)',
+    invUnknownCat.status === 422,
+    invUnknownCat.status,
+  );
+
+  // 11a2. The category list now reports the invoice count and can be edited.
+  const catList = await readBody<CategoryListResponse>(
+    await fetch(`${BASE}/api/categories`, {
+      headers: { authorization: `Bearer ${token}` },
+    }),
+  );
+  const fabric = catList.categories?.find((c) => c.id === categoryId);
+  check(
+    'category list reports invoice_count',
+    (fabric?.invoice_count ?? 0) >= 1,
+    fabric,
+  );
+
+  const catUpdate = await fetch(`${BASE}/api/categories/${categoryId}`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ name: 'Fabrics', color: '#0ea5e9' }),
+  });
+  const catUpdateBody = await readBody<CategoryResponse>(catUpdate);
+  check('category update returns 200', catUpdate.status === 200, catUpdate.status);
+  check(
+    'category update applies the new name and colour',
+    catUpdateBody.category?.name === 'Fabrics' &&
+      catUpdateBody.category?.color === '#0ea5e9',
+    catUpdateBody.category,
   );
 
   const txnRef = invoice?.monnify_transaction_reference ?? '';
@@ -716,6 +879,34 @@ async function main(): Promise<void> {
     'both scopes return the SAME totals shape',
     keysOf(merchantAnalytics.totals ?? {}) === keysOf(connectedAnalytics.totals ?? {}),
   );
+  // Phase 10: merchant-only depth is present for the merchant and null for the
+  // connected scope (which has no invoice lifecycle / per-item detail).
+  check(
+    'merchant scope carries the invoice funnel + top items',
+    merchantAnalytics.funnel != null &&
+      typeof (merchantAnalytics.funnel as { collection_rate?: unknown }).collection_rate ===
+        'number' &&
+      Array.isArray(merchantAnalytics.top_items),
+    { funnel: merchantAnalytics.funnel, top_items: merchantAnalytics.top_items },
+  );
+  check(
+    'connected scope nulls the merchant-only funnel + top items',
+    connectedAnalytics.funnel === null && connectedAnalytics.top_items === null,
+    { funnel: connectedAnalytics.funnel, top_items: connectedAnalytics.top_items },
+  );
+  // Phase 11: the category breakdown is merchant-only and includes the tagged
+  // sale we paid above; a connected account has no categories, so it is null.
+  check(
+    'merchant scope carries a category breakdown incl. the tagged sale',
+    Array.isArray(merchantAnalytics.by_category) &&
+      merchantAnalytics.by_category.some((r) => r.category === 'Fabrics'),
+    merchantAnalytics.by_category,
+  );
+  check(
+    'connected scope nulls the category breakdown',
+    connectedAnalytics.by_category === null,
+    connectedAnalytics.by_category,
+  );
 
   // 23. Ownership: another merchant cannot read this connected account
   const foreign = await fetch(
@@ -746,6 +937,294 @@ async function main(): Promise<void> {
   check(
     'disconnected account no longer appears in the list',
     !afterDisconnectText.includes(accountId),
+  );
+
+  // ── Phase 11: category ownership + delete-un-categorises ───────────────────
+
+  // 25. Another merchant can't touch this merchant's category, and deleting a
+  // category un-categorises its invoices (FK SET NULL) rather than deleting them.
+  const foreignDelCat = await fetch(`${BASE}/api/categories/${categoryId}`, {
+    method: 'DELETE',
+    headers: { authorization: `Bearer ${token2}` },
+  });
+  check(
+    "another merchant can't delete this category (404)",
+    foreignDelCat.status === 404,
+    foreignDelCat.status,
+  );
+
+  const tmpCat = await readBody<CategoryResponse>(
+    await fetch(`${BASE}/api/categories`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({ name: 'Temporary', color: '#ef4444' }),
+    }),
+  );
+  const tmpCatId = tmpCat.category?.id ?? '';
+  const tmpInv = await readBody<InvoiceCreateResponse>(
+    await fetch(`${BASE}/api/invoices`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        customer_name: 'Temp Buyer',
+        item: 'Order #77',
+        amount: 3000,
+        category_id: tmpCatId,
+      }),
+    }),
+  );
+  const tmpInvId = tmpInv.invoice?.id ?? '';
+  const delCat = await fetch(`${BASE}/api/categories/${tmpCatId}`, {
+    method: 'DELETE',
+    headers: { authorization: `Bearer ${token}` },
+  });
+  check('owner can delete a category (200)', delCat.status === 200, delCat.status);
+  const afterDelCat = await readBody<InvoiceDetailResponse>(
+    await fetch(`${BASE}/api/invoices/${tmpInvId}`, {
+      headers: { authorization: `Bearer ${token}` },
+    }),
+  );
+  check(
+    'deleting a category un-categorises its invoice (kept, not deleted)',
+    afterDelCat.invoice?.id === tmpInvId && afterDelCat.invoice?.category_id === null,
+    { id: afterDelCat.invoice?.id, category_id: afterDelCat.invoice?.category_id },
+  );
+
+  // ── Phase 12: static payment links ─────────────────────────────────────────
+
+  // 26. Create a fixed-amount link and a buyer-entered link.
+  const fixedLink = await readBody<PaymentLinkCreateResponse>(
+    await fetch(`${BASE}/api/payment-links`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        title: 'Ankara bundle',
+        item: '6 yards',
+        amount: 15000,
+        category_id: categoryId,
+      }),
+    }),
+  );
+  const fixedLinkId = fixedLink.link?.id ?? '';
+  const fixedSlug = fixedLink.link?.slug ?? '';
+  const fixedAccountRef = fixedLink.link?.reserved_account_reference ?? '';
+  check('create fixed payment link (201)', typeof fixedLinkId === 'string' && fixedLinkId !== '', fixedLink.link);
+  check(
+    'new link is active with a reserved account + checkout',
+    fixedLink.link?.status === 'active' &&
+      typeof fixedLink.link?.reserved_account_number === 'string' &&
+      typeof fixedLink.link?.checkout_url === 'string',
+    fixedLink.link,
+  );
+
+  const openLink = await readBody<PaymentLinkCreateResponse>(
+    await fetch(`${BASE}/api/payment-links`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({ title: 'Support the class' }),
+    }),
+  );
+  const openLinkId = openLink.link?.id ?? '';
+  check(
+    'create buyer-entered link (amount null)',
+    openLink.link?.amount === null && openLink.link?.status === 'active',
+    openLink.link,
+  );
+
+  // 27. A non-active merchant cannot create a link (token2 = onboarding).
+  const lockedLink = await fetch(`${BASE}/api/payment-links`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token2}` },
+    body: JSON.stringify({ title: 'Should fail', amount: 1000 }),
+  });
+  check('non-active merchant cannot create a link (403)', lockedLink.status === 403, lockedLink.status);
+
+  // 28. List returns the links + a status-count summary.
+  const linkList = await readBody<PaymentLinkListResponse>(
+    await fetch(`${BASE}/api/payment-links`, {
+      headers: { authorization: `Bearer ${token}` },
+    }),
+  );
+  check(
+    'link list returns a status summary',
+    (linkList.summary?.total ?? 0) >= 2 && (linkList.summary?.active ?? 0) >= 2,
+    linkList.summary,
+  );
+
+  // 29. Public lookup by slug: no auth, safe subset, active offers channels.
+  const pubLink = await fetch(`${BASE}/api/public/links/${fixedSlug}`);
+  const pubLinkText = await pubLink.text();
+  const pubLinkBody = JSON.parse(pubLinkText) as PublicLinkResponse;
+  check('public link lookup needs no auth (200)', pubLink.status === 200, pubLink.status);
+  check(
+    'public active link shows business name + payment channels',
+    pubLinkBody.link?.business_name === 'Demo Store' &&
+      typeof pubLinkBody.link?.reserved_account_number === 'string' &&
+      typeof pubLinkBody.link?.checkout_url === 'string',
+    pubLinkBody.link,
+  );
+  check(
+    'public link leaks no internals (reference / merchant id / settlement)',
+    !pubLinkText.includes('reserved_account_reference') &&
+      !pubLinkText.includes('merchant_id') &&
+      !pubLinkText.includes('settlement_amount'),
+  );
+  const pubLinkMissing = await fetch(`${BASE}/api/public/links/does-not-exist`);
+  check('unknown public slug is a 404', pubLinkMissing.status === 404, pubLinkMissing.status);
+
+  // 30. Simulate a collection on the fixed link, then read its stats.
+  const sim1 = await readBody<SimulateResponse>(
+    await fetch(`${BASE}/api/payment-links/${fixedLinkId}/simulate-collection`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({ customer_name: 'Ada Buyer' }),
+    }),
+  );
+  check(
+    'simulated collection is processed at the fixed amount',
+    sim1.outcome === 'processed' && sim1.amount === 15000,
+    sim1,
+  );
+  const linkDetail = await readBody<PaymentLinkDetailResponse>(
+    await fetch(`${BASE}/api/payment-links/${fixedLinkId}`, {
+      headers: { authorization: `Bearer ${token}` },
+    }),
+  );
+  check(
+    'link detail shows the collection with settlement + commission',
+    linkDetail.stats?.collection_count === 1 &&
+      linkDetail.stats?.total_collected === 15000 &&
+      linkDetail.collections?.length === 1 &&
+      linkDetail.collections[0]?.settlement_amount != null &&
+      linkDetail.collections[0]?.commission_amount != null,
+    { stats: linkDetail.stats, collection: linkDetail.collections?.[0] },
+  );
+
+  // 31. Buyer-entered link needs an amount at collection time.
+  const sim2 = await readBody<SimulateResponse>(
+    await fetch(`${BASE}/api/payment-links/${openLinkId}/simulate-collection`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({ amount: 6000, customer_name: 'Gift Giver' }),
+    }),
+  );
+  check('buyer-entered collection records the entered amount', sim2.outcome === 'processed' && sim2.amount === 6000, sim2);
+
+  // 32. Replaying the SAME collection webhook is a no-op (idempotent on event_key).
+  const linkReplayBody = JSON.stringify({
+    eventType: 'SUCCESSFUL_TRANSACTION',
+    eventData: {
+      transactionReference: sim1.transaction_reference,
+      paymentReference: sim1.payment_reference,
+      paymentStatus: 'PAID',
+      product: { reference: fixedAccountRef },
+    },
+  });
+  const linkReplaySig = createHmac('sha512', secret).update(linkReplayBody).digest('hex');
+  const linkReplayHook = await readBody<WebhookAck>(
+    await fetch(`${BASE}/api/webhooks/monnify`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'monnify-signature': linkReplaySig },
+      body: linkReplayBody,
+    }),
+  );
+  check('replayed link collection is a no-op (duplicate)', linkReplayHook.outcome === 'duplicate', linkReplayHook.outcome);
+  const afterReplayDetail = await readBody<PaymentLinkDetailResponse>(
+    await fetch(`${BASE}/api/payment-links/${fixedLinkId}`, {
+      headers: { authorization: `Bearer ${token}` },
+    }),
+  );
+  check('collection count unchanged after replay', afterReplayDetail.stats?.collection_count === 1, afterReplayDetail.stats);
+
+  // 33. An unknown transaction on the reserved account is verified, not trusted.
+  const unknownBody = JSON.stringify({
+    eventType: 'SUCCESSFUL_TRANSACTION',
+    eventData: {
+      transactionReference: `MOCK-LNK-UNKNOWN-${stamp}`,
+      paymentReference: `NEW-${stamp}`,
+      paymentStatus: 'PAID',
+      product: { reference: fixedAccountRef },
+    },
+  });
+  const unknownSig = createHmac('sha512', secret).update(unknownBody).digest('hex');
+  const unknownHook = await readBody<WebhookAck>(
+    await fetch(`${BASE}/api/webhooks/monnify`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'monnify-signature': unknownSig },
+      body: unknownBody,
+    }),
+  );
+  check('unverifiable link collection is not recorded (not_paid)', unknownHook.outcome === 'not_paid', unknownHook.outcome);
+
+  // 34. Status lifecycle: pause -> resume -> end, with ended terminal.
+  const paused = await readBody<PaymentLinkCreateResponse>(
+    await fetch(`${BASE}/api/payment-links/${fixedLinkId}/status`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({ status: 'paused' }),
+    }),
+  );
+  check('link can be paused (200)', paused.link?.status === 'paused', paused.link?.status);
+  const pubPaused = await readBody<PublicLinkResponse>(
+    await fetch(`${BASE}/api/public/links/${fixedSlug}`),
+  );
+  check(
+    'paused link withholds payment channels publicly',
+    pubPaused.link?.status === 'paused' &&
+      pubPaused.link?.reserved_account_number === null &&
+      pubPaused.link?.checkout_url === null,
+    pubPaused.link,
+  );
+  const resumed = await readBody<PaymentLinkCreateResponse>(
+    await fetch(`${BASE}/api/payment-links/${fixedLinkId}/status`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({ status: 'active' }),
+    }),
+  );
+  check('paused link can be resumed to active', resumed.link?.status === 'active', resumed.link?.status);
+  const ended = await fetch(`${BASE}/api/payment-links/${fixedLinkId}/status`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ status: 'ended' }),
+  });
+  check('link can be ended (200)', ended.status === 200, ended.status);
+  const reopen = await fetch(`${BASE}/api/payment-links/${fixedLinkId}/status`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ status: 'active' }),
+  });
+  check('an ended link cannot be reopened (409)', reopen.status === 409, reopen.status);
+
+  // 35. Ownership: another merchant can neither read nor change this link.
+  const foreignLinkGet = await fetch(`${BASE}/api/payment-links/${openLinkId}`, {
+    headers: { authorization: `Bearer ${token2}` },
+  });
+  check("another merchant can't read this link (404)", foreignLinkGet.status === 404, foreignLinkGet.status);
+  const foreignLinkStatus = await fetch(`${BASE}/api/payment-links/${openLinkId}/status`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token2}` },
+    body: JSON.stringify({ status: 'paused' }),
+  });
+  check("another merchant can't change this link (404)", foreignLinkStatus.status === 404, foreignLinkStatus.status);
+
+  // 36. General analytics now speaks to link collections too: a merchant-only
+  // by_link breakdown carries the link, and a connected account nulls it.
+  const linkAnalytics = await readBody<AnalyticsResponse>(
+    await fetch(`${BASE}/api/analytics?days=90`, {
+      headers: { authorization: `Bearer ${token}` },
+    }),
+  );
+  check(
+    'merchant analytics carries a by_link breakdown incl. the link',
+    Array.isArray(linkAnalytics.by_link) &&
+      linkAnalytics.by_link.some((r) => r.link === 'Ankara bundle'),
+    linkAnalytics.by_link,
+  );
+  check(
+    'connected scope nulls the by_link breakdown',
+    connectedAnalytics.by_link === null || connectedAnalytics.by_link === undefined,
+    connectedAnalytics.by_link,
   );
 
   console.log(`\n${passed} passed, ${failed} failed`);

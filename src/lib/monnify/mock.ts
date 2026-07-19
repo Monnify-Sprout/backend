@@ -3,6 +3,8 @@ import { createHash } from 'node:crypto';
 import type {
   CreateInvoiceInput,
   CreateInvoiceResult,
+  CreateReservedAccountInput,
+  CreateReservedAccountResult,
   CreateSubAccountInput,
   CreateSubAccountResult,
   ExternalCredentials,
@@ -95,6 +97,39 @@ export class MonnifyMockProvider implements MonnifyProvider {
       virtualAccountNumber,
       virtualAccountBankName: 'Mock Bank',
       checkoutUrl: `https://mock.monnify.local/checkout/${input.invoiceReference}`,
+    });
+  }
+
+  createReservedAccount(
+    input: CreateReservedAccountInput,
+  ): Promise<CreateReservedAccountResult> {
+    // Deterministic permanent account number derived from the reference, so a
+    // re-created link (same reference) appears stable, exactly like createInvoice.
+    const hex = createHash('sha1').update(input.accountReference).digest('hex');
+    const reservedAccountNumber = String(
+      parseInt(hex.slice(0, 12), 16) % 10_000_000_000,
+    ).padStart(10, '0');
+    return Promise.resolve({
+      accountReference: input.accountReference,
+      reservedAccountNumber,
+      bankName: 'Mock Bank',
+      checkoutUrl: `https://mock.monnify.local/link/${input.accountReference}`,
+    });
+  }
+
+  // Mock-only demo affordance (NOT on the MonnifyProvider interface): register an
+  // expected collection so a subsequently-signed webhook's verifyTransaction can
+  // confirm it, exactly as createInvoice seeds the ledger for a Dynamic Invoice.
+  // Used by the "Simulate a payment" demo action, the seed, and smoke. Live
+  // payments cannot be faked, so only the mock provider offers this.
+  registerReservedAccountPayment(input: {
+    transactionReference: string;
+    amount: number;
+    currency: string;
+  }): void {
+    this.ledger.set(input.transactionReference, {
+      amount: input.amount,
+      currency: input.currency,
     });
   }
 

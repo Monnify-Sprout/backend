@@ -56,6 +56,8 @@ export const createInvoiceSchema = z
       .string()
       .regex(/^\d{4}-\d{2}-\d{2}$/, 'due_date must be YYYY-MM-DD')
       .optional(),
+    // Optional merchant category (Phase 11); ownership is checked in the service.
+    category_id: z.string().uuid('Invalid category').optional(),
   })
   .refine(
     (v) =>

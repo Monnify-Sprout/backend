@@ -4,6 +4,8 @@ import { HttpError } from '../../middleware/error';
 import type {
   CreateInvoiceInput,
   CreateInvoiceResult,
+  CreateReservedAccountInput,
+  CreateReservedAccountResult,
   CreateSubAccountInput,
   CreateSubAccountResult,
   ExternalCredentials,
@@ -44,6 +46,13 @@ interface TransactionBody {
   currencyCode?: string;
   paymentMethod?: string;
   paidOn?: string;
+}
+interface ReservedAccountBody {
+  accountReference: string;
+  accounts?: { accountNumber?: string; bankName?: string }[];
+  accountNumber?: string;
+  bankName?: string;
+  checkoutUrl?: string;
 }
 
 // Real Monnify integration.
@@ -234,6 +243,49 @@ export class MonnifyLiveProvider implements MonnifyProvider {
       virtualAccountNumber: b.accountNumber ?? '',
       virtualAccountBankName: b.bankName,
       checkoutUrl: b.checkoutUrl,
+    };
+  }
+
+  // A reserved (permanent) account backing a static payment link (Phase 12).
+  // Structurally complete behind the env gate; like the rest of the live path it
+  // is not exercised in sandbox (the demo runs on the mock provider). Confirm the
+  // exact reserved-account endpoint + split fields against Monnify's live docs
+  // before a production run.
+  async createReservedAccount(
+    input: CreateReservedAccountInput,
+  ): Promise<CreateReservedAccountResult> {
+    const cfg = this.config();
+    const token = await this.authToken();
+    const res = await fetch(`${cfg.baseUrl}/api/v2/bank-transfer/reserved-accounts`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        accountReference: input.accountReference,
+        accountName: input.accountName,
+        currencyCode: 'NGN',
+        contractCode: cfg.contractCode,
+        customerEmail: input.customerEmail,
+        customerName: input.customerName,
+        getAllAvailableBanks: false,
+      }),
+    });
+    const json = (await res.json()) as MonnifyEnvelope<ReservedAccountBody>;
+    const b = json.responseBody;
+    if (!res.ok || !json.requestSuccessful || !b?.accountReference) {
+      throw new HttpError(
+        502,
+        `Monnify reserved account creation failed: ${json.responseMessage ?? res.status}`,
+      );
+    }
+    const first = b.accounts?.[0];
+    return {
+      accountReference: b.accountReference,
+      reservedAccountNumber: first?.accountNumber ?? b.accountNumber ?? '',
+      bankName: first?.bankName ?? b.bankName,
+      checkoutUrl: b.checkoutUrl ?? '',
     };
   }
 
