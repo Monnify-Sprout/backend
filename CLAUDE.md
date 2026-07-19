@@ -44,12 +44,15 @@ This gates every merchant's onboarding, not one optional feature.
 
 ## Current phase
 
-Phases 1–7 **complete and verified end to end** against the live Supabase DB
-(`npm run smoke` → 65/65). Migrations in `migrations/` (`npm run migrate`).
+Phases 1–8 **complete and verified end to end** against the live Supabase DB
+(`npm run smoke` → 74/74). Migrations in `migrations/` (`npm run migrate`).
 
 Endpoints (all DB access via `pg`):
 - `POST /api/auth/register`, `POST /api/auth/login`, protected `GET /api/me`
-- protected `POST /api/verification` - BVN/NIN → verify → create sub-account → `active`
+- protected `POST /api/verification` - BVN/NIN → verify → create sub-account →
+  `active`. Also REQUIRES the merchant's settlement bank account (bank code +
+  NUBAN, names optional; migration 0005), stored on the merchant and passed to
+  Create-Sub-Account (DECIDED 2026-07-18; mock ignores it for its stub code)
 - protected `POST /api/invoices` (create Dynamic Invoice), `GET /api/invoices`,
   `GET /api/invoices/:id` (invoice + payment/settlement). An invoice is a
   required `item` plus optional `notes` (migration 0004 split the old
@@ -69,7 +72,9 @@ Endpoints (all DB access via `pg`):
 - protected `POST /api/connected-accounts` (validate then AES-256-GCM-encrypt the
   merchant's own Monnify creds - never logged/returned after creation),
   `GET /api/connected-accounts`, `POST /api/connected-accounts/:id/sync`
-  (idempotent pull into `external_transactions`)
+  (idempotent pull into `external_transactions`),
+  `DELETE /api/connected-accounts/:id` (disconnect - removes the link + its
+  pulled history via FK cascade, owner-scoped)
 - protected `GET /api/analytics[?connected_account_id][&days]` - ONE aggregation
   SQL over a swappable base CTE (`src/modules/analytics/analytics.service.ts`), so
   merchant and connected scopes return identical shapes (totals, trend,
