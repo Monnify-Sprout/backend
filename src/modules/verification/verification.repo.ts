@@ -32,20 +32,41 @@ export async function getMerchantVerificationState(
 // Identity confirmed AND sub-account created → the merchant becomes Active.
 export async function markMerchantVerified(
   id: string,
-  data: { subAccountCode: string; bvnOrNinRef: string; mode: VerificationMode },
+  data: {
+    subAccountCode: string;
+    bvnOrNinRef: string;
+    mode: VerificationMode;
+    settlementBankCode: string;
+    settlementBankName: string | null;
+    settlementAccountNumber: string;
+    settlementAccountName: string | null;
+  },
 ): Promise<PublicMerchant> {
   const rows = await query<PublicMerchant>(
     `update merchants set
-       verification_status = 'verified',
-       verification_reason = null,
-       bvn_or_nin_ref      = $2,
-       sub_account_code    = $3,
-       verification_mode   = $4,
-       verified_at         = now(),
-       status              = 'active'
+       verification_status       = 'verified',
+       verification_reason       = null,
+       bvn_or_nin_ref            = $2,
+       sub_account_code          = $3,
+       verification_mode         = $4,
+       settlement_bank_code      = $5,
+       settlement_bank_name      = $6,
+       settlement_account_number = $7,
+       settlement_account_name   = $8,
+       verified_at               = now(),
+       status                    = 'active'
      where id = $1
      returning ${PUBLIC_MERCHANT_COLUMNS}`,
-    [id, data.bvnOrNinRef, data.subAccountCode, data.mode],
+    [
+      id,
+      data.bvnOrNinRef,
+      data.subAccountCode,
+      data.mode,
+      data.settlementBankCode,
+      data.settlementBankName,
+      data.settlementAccountNumber,
+      data.settlementAccountName,
+    ],
   );
   return rows[0]!;
 }

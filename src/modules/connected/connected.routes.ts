@@ -4,7 +4,10 @@ import { formatZodError } from '../../lib/validation';
 import { requireAuth } from '../../middleware/auth';
 import { HttpError } from '../../middleware/error';
 
-import { listConnectedAccounts } from './connected.repo';
+import {
+  deleteConnectedAccount,
+  listConnectedAccounts,
+} from './connected.repo';
 import { connectAccountSchema } from './connected.schema';
 import { connectAccount, syncConnectedAccount } from './connected.service';
 
@@ -47,6 +50,24 @@ connectedRouter.post('/:id/sync', async (req, res, next) => {
     }
     const result = await syncConnectedAccount(req.merchant!.id, id);
     res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /api/connected-accounts/:id - disconnect (removes the link + its pulled
+// history). Read-only integration, so this is always available (PRD §7.6).
+connectedRouter.delete('/:id', async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    if (!id) {
+      throw new HttpError(400, 'Invalid connected account id.');
+    }
+    const deleted = await deleteConnectedAccount(req.merchant!.id, id);
+    if (!deleted) {
+      throw new HttpError(404, 'Connected account not found.');
+    }
+    res.json({ deleted: true });
   } catch (err) {
     next(err);
   }

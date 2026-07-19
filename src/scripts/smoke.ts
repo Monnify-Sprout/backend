@@ -15,8 +15,18 @@ interface MerchantView {
   verification_mode?: string | null;
   verification_reason?: string | null;
   sub_account_code?: string | null;
+  settlement_bank_code?: string | null;
+  settlement_account_number?: string | null;
   email?: string;
 }
+
+// Settlement bank account now required at verification (DECIDED 2026-07-18).
+const SETTLEMENT = {
+  settlement_bank_code: '058',
+  settlement_bank_name: 'Guaranty Trust Bank',
+  settlement_account_number: '0123456789',
+  settlement_account_name: 'Ada Demo',
+};
 interface RegisterResponse {
   merchant?: MerchantView;
 }
@@ -220,7 +230,7 @@ async function main(): Promise<void> {
   const verifyOk = await fetch(`${BASE}/api/verification`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-    body: JSON.stringify({ id_type: 'BVN', id_number: '22212345678' }),
+    body: JSON.stringify({ id_type: 'BVN', id_number: '22212345678', ...SETTLEMENT }),
   });
   const verifyOkBody = await readBody<RegisterResponse>(verifyOk);
   check('verification returns 200', verifyOk.status === 200, verifyOk.status);
@@ -245,12 +255,56 @@ async function main(): Promise<void> {
     verifyOkBody.merchant?.verification_mode === 'mock',
     verifyOkBody.merchant?.verification_mode,
   );
+  check(
+    'verified merchant stored its settlement account',
+    verifyOkBody.merchant?.settlement_bank_code === SETTLEMENT.settlement_bank_code &&
+      verifyOkBody.merchant?.settlement_account_number ===
+        SETTLEMENT.settlement_account_number,
+    {
+      code: verifyOkBody.merchant?.settlement_bank_code,
+      acct: verifyOkBody.merchant?.settlement_account_number,
+    },
+  );
+
+  // 7b. Verification without a settlement account is rejected up front.
+  const stampS = Date.now() + 7;
+  const emailS = `demo+${stampS}@sprout.test`;
+  const phoneS = `082${String(10000000 + (stampS % 89999999))}`;
+  await fetch(`${BASE}/api/auth/register`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      business_name: 'NoBank Store',
+      owner_name: 'Cee Demo',
+      phone: phoneS,
+      email: emailS,
+      password,
+    }),
+  });
+  const tokenS =
+    (await readBody<LoginResponse>(
+      await fetch(`${BASE}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email: emailS, password }),
+      }),
+    )).token ?? '';
+  const verifyNoBank = await fetch(`${BASE}/api/verification`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${tokenS}` },
+    body: JSON.stringify({ id_type: 'BVN', id_number: '22212345678' }),
+  });
+  check(
+    'verification without a settlement account is rejected (422)',
+    verifyNoBank.status === 422,
+    verifyNoBank.status,
+  );
 
   // 8. Re-verifying an already-verified merchant is rejected
   const reVerify = await fetch(`${BASE}/api/verification`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-    body: JSON.stringify({ id_type: 'BVN', id_number: '22212345678' }),
+    body: JSON.stringify({ id_type: 'BVN', id_number: '22212345678', ...SETTLEMENT }),
   });
   check('re-verifying an active merchant is rejected (409)', reVerify.status === 409, reVerify.status);
 
@@ -278,7 +332,7 @@ async function main(): Promise<void> {
   const verifyFail = await fetch(`${BASE}/api/verification`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${token2}` },
-    body: JSON.stringify({ id_type: 'NIN', id_number: '22212340000' }),
+    body: JSON.stringify({ id_type: 'NIN', id_number: '22212340000', ...SETTLEMENT }),
   });
   const verifyFailBody = await readBody<RegisterResponse>(verifyFail);
   check('failed verification returns 200', verifyFail.status === 200, verifyFail.status);
@@ -669,6 +723,30 @@ async function main(): Promise<void> {
     { headers: { authorization: `Bearer ${token2}` } },
   );
   check("another merchant's analytics access is rejected (404)", foreign.status === 404, foreign.status);
+
+  // 24. Disconnect: another merchant can't, the owner can, and it's then gone.
+  const disconnectForeign = await fetch(
+    `${BASE}/api/connected-accounts/${accountId}`,
+    { method: 'DELETE', headers: { authorization: `Bearer ${token2}` } },
+  );
+  check(
+    "another merchant can't disconnect this account (404)",
+    disconnectForeign.status === 404,
+    disconnectForeign.status,
+  );
+  const disconnect = await fetch(
+    `${BASE}/api/connected-accounts/${accountId}`,
+    { method: 'DELETE', headers: { authorization: `Bearer ${token}` } },
+  );
+  check('owner can disconnect the account (200)', disconnect.status === 200, disconnect.status);
+  const afterDisconnect = await fetch(`${BASE}/api/connected-accounts`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  const afterDisconnectText = await afterDisconnect.text();
+  check(
+    'disconnected account no longer appears in the list',
+    !afterDisconnectText.includes(accountId),
+  );
 
   console.log(`\n${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);

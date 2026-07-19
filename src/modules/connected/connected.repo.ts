@@ -128,6 +128,21 @@ export async function upsertExternalTransactions(
   return rows.length;
 }
 
+// Disconnect = remove the link and its pulled history (FK cascade). Scoped to the
+// owning merchant. Returns true if a row was actually deleted.
+export async function deleteConnectedAccount(
+  merchantId: string,
+  accountId: string,
+): Promise<boolean> {
+  const rows = await query<{ id: string }>(
+    `delete from connected_accounts
+      where id = $1 and merchant_id = $2
+      returning id`,
+    [accountId, merchantId],
+  );
+  return rows.length > 0;
+}
+
 export async function markSynced(
   accountId: string,
   status: ConnectedStatus,

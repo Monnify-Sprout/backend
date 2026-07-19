@@ -65,5 +65,9 @@ export async function verifyMerchantIdentity(
     subAccountCode: sub.subAccountCode,
     bvnOrNinRef: maskedRef,
     mode: provider.mode,
+    settlementBankCode: input.settlement_bank_code,
+    settlementBankName: input.settlement_bank_name ?? null,
+    settlementAccountNumber: input.settlement_account_number,
+    settlementAccountName: input.settlement_account_name ?? null,
   });
 }

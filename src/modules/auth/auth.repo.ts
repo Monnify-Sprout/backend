@@ -18,6 +18,10 @@ export interface MerchantRow {
   verification_mode: VerificationMode | null;
   sub_account_code: string | null;
   status: MerchantStatus;
+  settlement_bank_code: string | null;
+  settlement_bank_name: string | null;
+  settlement_account_number: string | null;
+  settlement_account_name: string | null;
   verified_at: string | null;
   created_at: string;
   updated_at: string;
@@ -35,15 +39,21 @@ export interface PublicMerchant {
   verification_mode: VerificationMode | null;
   sub_account_code: string | null;
   status: MerchantStatus;
+  settlement_bank_code: string | null;
+  settlement_bank_name: string | null;
+  settlement_account_number: string | null;
+  settlement_account_name: string | null;
   verified_at: string | null;
   created_at: string;
   updated_at: string;
 }
 
 // Column list for the safe projection. Exported so other merchant-facing modules
-// (e.g. verification) return the exact same shape.
+// (e.g. verification) return the exact same shape. Settlement account belongs to
+// the merchant themselves and is only ever returned to that authenticated
+// merchant (register/login/me/verification), never cross-merchant.
 export const PUBLIC_MERCHANT_COLUMNS =
-  'id, business_name, owner_name, phone, email, verification_status, verification_reason, verification_mode, sub_account_code, status, verified_at, created_at, updated_at';
+  'id, business_name, owner_name, phone, email, verification_status, verification_reason, verification_mode, sub_account_code, status, settlement_bank_code, settlement_bank_name, settlement_account_number, settlement_account_name, verified_at, created_at, updated_at';
 
 export function toPublicMerchant(row: MerchantRow): PublicMerchant {
   return {
@@ -57,6 +67,10 @@ export function toPublicMerchant(row: MerchantRow): PublicMerchant {
     verification_mode: row.verification_mode,
     sub_account_code: row.sub_account_code,
     status: row.status,
+    settlement_bank_code: row.settlement_bank_code,
+    settlement_bank_name: row.settlement_bank_name,
+    settlement_account_number: row.settlement_account_number,
+    settlement_account_name: row.settlement_account_name,
     verified_at: row.verified_at,
     created_at: row.created_at,
     updated_at: row.updated_at,
