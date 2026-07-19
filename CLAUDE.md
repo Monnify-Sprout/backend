@@ -58,8 +58,11 @@ Endpoints (all DB access via `pg`):
   required `item` plus optional `notes` (migration 0004 split the old
   `description`); the buyer needs at least one of name/phone/email/social handle
   (name is NOT required - social-commerce buyers may be just a handle), enforced
-  by a zod refine and a DB CHECK. Monnify's description is composed from
-  item+notes and its required customerName falls back through handle/phone.
+  by a zod refine and a DB CHECK. A social handle can carry its network in
+  `customer_social_platform` (migration 0006; free text - known keys
+  instagram/whatsapp/facebook/snapchat or a merchant-typed "Other"), stored only
+  when a handle is present. Monnify's description is composed from item+notes and
+  its required customerName falls back through handle/phone.
 - `POST /api/webhooks/monnify` - no auth; HMAC-SHA512 signature over the RAW body
   (captured in `index.ts`), idempotent via `payments.event_key`, confirms with
   Verify Transaction before marking Paid (never trusts the payload)
@@ -98,4 +101,13 @@ secret key, contract code, base URL. Monnify signs webhooks with the secret
 key, so there is no separate webhook secret to obtain. The demo still runs on
 mock.
 
-Next: Phase 9a - seed script (Phase 8 is frontend-only).
+Phase 9a (seed script) **complete**: `npm run seed` (`src/scripts/seed.ts`) is
+idempotent and drives the real service layer in-process to set up the PRD §13
+demo - one verified Active demo merchant (`demo@sprout.test`), ~10 of its own
+invoices (paid/pending/overdue, paid ones backdated across ~3 weeks for a real
+trend, transfer/card mix), and a second contract ("Lagos Beauty Hub") connected
++ synced. Requires MONNIFY_VERIFICATION_MODE=mock (it fabricates paid invoices
+and deterministic connected history, which only the mock provider can produce).
+
+Next: nothing outstanding on the backend for the hackathon path. Roadmap Phase 10
+(categories) is the next feature if pursued.

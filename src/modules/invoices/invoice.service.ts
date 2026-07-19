@@ -6,11 +6,7 @@ import { computeSplit, round2 } from '../../lib/money';
 import { HttpError } from '../../middleware/error';
 import { findMerchantById } from '../auth/auth.repo';
 
-import {
-  insertInvoice,
-  type PublicInvoice,
-  type SettlementPath,
-} from './invoice.repo';
+import { insertInvoice, type PublicInvoice, type SettlementPath } from './invoice.repo';
 import type { CreateInvoiceInput } from './invoice.schema';
 
 export interface InvoiceWithSettlement {
@@ -34,34 +30,25 @@ export async function createInvoice(
   }
   // Only a verified, sub-account-holding merchant can collect (PRD §7.1).
   if (merchant.status !== 'active' || !merchant.sub_account_code) {
-    throw new HttpError(
-      403,
-      'Complete BVN/NIN verification before creating invoices.',
-    );
+    throw new HttpError(403, 'Complete BVN/NIN verification before creating invoices.');
   }
 
   const amount = round2(input.amount);
-  const { commission, settlement } = computeSplit(
-    amount,
-    env.SPROUT_COMMISSION_PERCENT,
-  );
+  const { commission, settlement } = computeSplit(amount, env.SPROUT_COMMISSION_PERCENT);
 
   // Split applied at settlement only if Monnify's Create Invoice supports it
   // (UNCONFIRMED, PRD §7.3); otherwise the safe manual fallback.
   const splitSupported = env.MONNIFY_INVOICE_SPLIT_SUPPORTED;
   const settlementPath: SettlementPath = splitSupported ? 'split' : 'manual';
 
-  const invoiceReference = `SPT-${Date.now().toString(36).toUpperCase()}-${randomBytes(
-    3,
-  )
+  const invoiceReference = `SPT-${Date.now().toString(36).toUpperCase()}-${randomBytes(3)
     .toString('hex')
     .toUpperCase()}`;
   // Monnify requires an email; when the buyer gave none we synthesise a
   // placeholder for the API call ONLY - the DB keeps the real value (or null),
   // so the "at least one identifier" rule stays meaningful.
   const monnifyEmail =
-    input.customer_email ??
-    `invoice+${invoiceReference.toLowerCase()}@sprout.invalid`;
+    input.customer_email ?? `invoice+${invoiceReference.toLowerCase()}@sprout.invalid`;
 
   // Monnify's Create Invoice requires a customer name; the buyer may only have
   // given a handle or phone, so fall back through whatever identifies them.
@@ -70,6 +57,8 @@ export async function createInvoice(
       ? input.customer_social_handle
       : `@${input.customer_social_handle}`
     : null;
+  // The platform only means something alongside a handle; drop it otherwise.
+  const socialPlatform = handle ? (input.customer_social_platform ?? null) : null;
   const customerName =
     input.customer_name ?? handle ?? input.customer_phone ?? 'Customer';
   // The Monnify description is the item, with notes appended when present.
@@ -99,6 +88,7 @@ export async function createInvoice(
     customerEmail: input.customer_email ?? null,
     customerPhone: input.customer_phone ?? null,
     customerSocialHandle: handle,
+    customerSocialPlatform: socialPlatform,
     item: input.item,
     notes: input.notes ?? null,
     amount,

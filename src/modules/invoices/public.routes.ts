@@ -33,9 +33,8 @@ publicInvoiceRouter.get('/invoices/:reference', async (req, res, next) => {
     }
 
     const payable = found.status === 'pending';
-    const payment = found.status === 'paid'
-      ? await findPaymentForInvoice(found.id)
-      : null;
+    const payment =
+      found.status === 'paid' ? await findPaymentForInvoice(found.id) : null;
 
     res.json({
       invoice: {
@@ -43,6 +42,7 @@ publicInvoiceRouter.get('/invoices/:reference', async (req, res, next) => {
         business_name: found.business_name,
         customer_name: found.customer_name,
         customer_social_handle: found.customer_social_handle,
+        customer_social_platform: found.customer_social_platform,
         item: found.item,
         amount: found.amount,
         currency: found.currency,

@@ -9,6 +9,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "migrate": "tsx src/scripts/migrate.ts",
+    "seed": "tsx src/scripts/seed.ts",
     "smoke": "tsx src/scripts/smoke.ts",
     "lint": "eslint .",
     "format": "prettier --write .",

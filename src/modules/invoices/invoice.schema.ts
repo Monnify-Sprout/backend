@@ -29,12 +29,23 @@ const socialHandleField = z
   .max(100)
   .regex(/^@?[a-zA-Z0-9._]+$/, 'Enter a valid handle, e.g. @chidi_styles');
 
+// Which network the handle is on. Known values (instagram/whatsapp/facebook/
+// snapchat) are sent lowercase by the client; "Other" is whatever the merchant
+// typed, so this is free text, only length- and charset-bounded.
+const socialPlatformField = z
+  .string()
+  .trim()
+  .min(1)
+  .max(30)
+  .regex(/^[a-zA-Z0-9 .&/_-]+$/, 'Enter a valid platform');
+
 export const createInvoiceSchema = z
   .object({
     customer_name: z.string().trim().min(1).max(200).optional(),
     customer_email: emailField.optional(),
     customer_phone: phoneField.optional(),
     customer_social_handle: socialHandleField.optional(),
+    customer_social_platform: socialPlatformField.optional(),
     item: z.string().trim().min(1, 'Item is required').max(200),
     notes: z.string().trim().max(500).optional(),
     amount: z.coerce
@@ -50,9 +61,9 @@ export const createInvoiceSchema = z
     (v) =>
       Boolean(
         v.customer_name ||
-          v.customer_phone ||
-          v.customer_email ||
-          v.customer_social_handle,
+        v.customer_phone ||
+        v.customer_email ||
+        v.customer_social_handle,
       ),
     {
       message:

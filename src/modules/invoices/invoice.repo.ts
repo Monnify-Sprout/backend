@@ -11,6 +11,7 @@ export interface PublicInvoice {
   customer_email: string | null;
   customer_phone: string | null;
   customer_social_handle: string | null;
+  customer_social_platform: string | null;
   item: string | null;
   notes: string | null;
   amount: string; // pg returns numeric as string
@@ -39,7 +40,7 @@ export interface PublicPayment {
 }
 
 const INVOICE_COLUMNS =
-  'id, merchant_id, invoice_reference, customer_name, customer_email, customer_phone, customer_social_handle, item, notes, amount, currency, due_date, status, virtual_account_number, checkout_url, monnify_transaction_reference, settlement_path, created_at, updated_at';
+  'id, merchant_id, invoice_reference, customer_name, customer_email, customer_phone, customer_social_handle, customer_social_platform, item, notes, amount, currency, due_date, status, virtual_account_number, checkout_url, monnify_transaction_reference, settlement_path, created_at, updated_at';
 
 const PAYMENT_COLUMNS =
   'id, invoice_id, amount, currency, payment_method, settlement_amount, commission_amount, monnify_transaction_reference, paid_at, created_at';
@@ -51,6 +52,7 @@ export interface NewInvoice {
   customerEmail: string | null;
   customerPhone: string | null;
   customerSocialHandle: string | null;
+  customerSocialPlatform: string | null;
   item: string;
   notes: string | null;
   amount: number;
@@ -66,10 +68,10 @@ export async function insertInvoice(input: NewInvoice): Promise<PublicInvoice> {
   const rows = await query<PublicInvoice>(
     `insert into invoices
        (merchant_id, invoice_reference, customer_name, customer_email,
-        customer_phone, customer_social_handle, item, notes,
+        customer_phone, customer_social_handle, customer_social_platform, item, notes,
         amount, currency, due_date, status,
         monnify_transaction_reference, virtual_account_number, checkout_url, settlement_path)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'pending', $12, $13, $14, $15)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'pending', $13, $14, $15, $16)
      returning ${INVOICE_COLUMNS}`,
     [
       input.merchantId,
@@ -78,6 +80,7 @@ export async function insertInvoice(input: NewInvoice): Promise<PublicInvoice> {
       input.customerEmail,
       input.customerPhone,
       input.customerSocialHandle,
+      input.customerSocialPlatform,
       input.item,
       input.notes,
       input.amount,
@@ -168,6 +171,7 @@ export interface PublicInvoiceLookup {
   business_name: string;
   customer_name: string | null;
   customer_social_handle: string | null; // shown as the "billed to" label
+  customer_social_platform: string | null;
   item: string | null;
   amount: string;
   currency: string;
@@ -185,7 +189,7 @@ export async function findPublicInvoiceByReference(
 ): Promise<PublicInvoiceLookup | null> {
   const rows = await query<PublicInvoiceLookup>(
     `select i.id, i.invoice_reference, m.business_name,
-            i.customer_name, i.customer_social_handle, i.item,
+            i.customer_name, i.customer_social_handle, i.customer_social_platform, i.item,
             i.amount, i.currency, i.due_date, i.status,
             i.virtual_account_number, i.checkout_url, i.created_at
        from invoices i
@@ -222,9 +226,7 @@ export interface RecordPaymentInput {
 
 // Idempotent: the unique event_key means a replayed webhook inserts nothing.
 // Returns true if THIS call recorded the payment, false if it was a duplicate.
-export async function recordPaymentIfNew(
-  input: RecordPaymentInput,
-): Promise<boolean> {
+export async function recordPaymentIfNew(input: RecordPaymentInput): Promise<boolean> {
   const rows = await query<{ id: string }>(
     `insert into payments
        (invoice_id, event_key, monnify_transaction_reference, amount, currency,
@@ -249,8 +251,7 @@ export async function recordPaymentIfNew(
 }
 
 export async function markInvoicePaid(invoiceId: string): Promise<void> {
-  await query(
-    `update invoices set status = 'paid' where id = $1 and status <> 'paid'`,
-    [invoiceId],
-  );
+  await query(`update invoices set status = 'paid' where id = $1 and status <> 'paid'`, [
+    invoiceId,
+  ]);
 }
