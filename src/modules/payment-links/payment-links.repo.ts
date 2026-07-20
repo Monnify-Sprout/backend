@@ -15,6 +15,7 @@ export interface PublicPaymentLink {
   currency: string;
   status: PaymentLinkStatus;
   category_id: string | null;
+  stream_id: string | null;
   reserved_account_reference: string | null;
   reserved_account_number: string | null;
   reserved_account_bank_name: string | null;
@@ -24,6 +25,8 @@ export interface PublicPaymentLink {
   // Populated by the list/detail queries (joined category); undefined elsewhere.
   category_name?: string | null;
   category_color?: string | null;
+  // Populated by the list/detail queries (joined stream); undefined elsewhere.
+  stream_name?: string | null;
   // Per-link collection rollups; populated by the list query and getLinkStats.
   collection_count?: number;
   total_collected?: string;
@@ -60,7 +63,7 @@ export interface LinkStats {
 }
 
 const LINK_COLUMNS =
-  'id, merchant_id, title, item, slug, amount, currency, status, category_id, reserved_account_reference, reserved_account_number, reserved_account_bank_name, checkout_url, created_at, updated_at';
+  'id, merchant_id, title, item, slug, amount, currency, status, category_id, stream_id, reserved_account_reference, reserved_account_number, reserved_account_bank_name, checkout_url, created_at, updated_at';
 
 const LINK_PAYMENT_COLUMNS =
   'id, payment_link_id, amount, currency, payment_method, customer_name, settlement_amount, commission_amount, monnify_transaction_reference, paid_at, created_at';
@@ -79,6 +82,7 @@ export interface NewPaymentLink {
   amount: number | null;
   currency: string;
   categoryId: string | null;
+  streamId: string | null;
   reservedAccountReference: string;
   reservedAccountNumber: string;
   reservedAccountBankName: string | null;
@@ -90,10 +94,10 @@ export async function insertPaymentLink(
 ): Promise<PublicPaymentLink> {
   const rows = await query<PublicPaymentLink>(
     `insert into payment_links
-       (merchant_id, title, item, slug, amount, currency, status, category_id,
+       (merchant_id, title, item, slug, amount, currency, status, category_id, stream_id,
         reserved_account_reference, reserved_account_number,
         reserved_account_bank_name, checkout_url)
-     values ($1, $2, $3, $4, $5, $6, 'active', $7, $8, $9, $10, $11)
+     values ($1, $2, $3, $4, $5, $6, 'active', $7, $8, $9, $10, $11, $12)
      returning ${LINK_COLUMNS}`,
     [
       input.merchantId,
@@ -103,6 +107,7 @@ export async function insertPaymentLink(
       input.amount,
       input.currency,
       input.categoryId,
+      input.streamId,
       input.reservedAccountReference,
       input.reservedAccountNumber,
       input.reservedAccountBankName,
@@ -120,9 +125,11 @@ export async function listPaymentLinksForMerchant(
       .map((c) => `p.${c}`)
       .join(', ')},
             c.name as category_name, c.color as category_color,
+            s.name as stream_name,
             ${LINK_ROLLUPS}
        from payment_links p
        left join categories c on c.id = p.category_id
+       left join streams s on s.id = p.stream_id
       where p.merchant_id = $1
       order by p.created_at desc`,
     [merchantId],
@@ -137,9 +144,11 @@ export async function findPaymentLinkForMerchant(
     `select ${LINK_COLUMNS.split(', ')
       .map((c) => `p.${c}`)
       .join(', ')},
-            c.name as category_name, c.color as category_color
+            c.name as category_name, c.color as category_color,
+            s.name as stream_name
        from payment_links p
        left join categories c on c.id = p.category_id
+       left join streams s on s.id = p.stream_id
       where p.id = $1 and p.merchant_id = $2
       limit 1`,
     [linkId, merchantId],

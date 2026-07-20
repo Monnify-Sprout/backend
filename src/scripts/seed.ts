@@ -17,6 +17,8 @@ import {
   setPaymentLinkStatus,
   simulateLinkCollection,
 } from '../modules/payment-links/payment-links.service';
+import { listStreamsForMerchant } from '../modules/streams/streams.repo';
+import { createStream, setStreamStatus } from '../modules/streams/streams.service';
 import { verifyMerchantIdentity } from '../modules/verification/verification.service';
 import { processMonnifyWebhook } from '../modules/webhooks/webhook.service';
 
@@ -82,6 +84,36 @@ const SEED_CATEGORIES: { name: string; color: string }[] = [
   { name: 'Accessories', color: '#f59e0b' },
 ];
 
+// Revenue streams (Phase 13): where each sale came from. "Ikeja shop" is ROUTED
+// (its own settlement account -> its own sub-account, demonstrating money
+// routing); "Instagram" is tracking-only; the archived pop-up shows the archived
+// state on the manager page. Some invoices/links stay unassigned on purpose, to
+// show the "Unassigned" analytics bucket.
+interface StreamSpec {
+  name: string;
+  settlement?: {
+    bank_code: string;
+    bank_name: string;
+    account_number: string;
+    account_name: string;
+  };
+  archived?: boolean;
+}
+
+const SEED_STREAMS: StreamSpec[] = [
+  {
+    name: 'Ikeja shop',
+    settlement: {
+      bank_code: '044',
+      bank_name: 'Access Bank',
+      account_number: '0987654321',
+      account_name: 'Ada Obiora (Ikeja)',
+    },
+  },
+  { name: 'Instagram' },
+  { name: 'Eid pop-up', archived: true },
+];
+
 interface InvoiceSpec {
   customer_name?: string;
   customer_phone?: string;
@@ -96,6 +128,7 @@ interface InvoiceSpec {
   daysAgo: number; // how far back created (and, for paid, settled)
   dueInDays?: number; // due date relative to today (negative = past)
   category?: string; // one of SEED_CATEGORIES' names; omitted = uncategorised
+  stream?: string; // one of SEED_STREAMS' names; omitted = unassigned
 }
 
 // A realistic Nigerian social-commerce mix: amounts hit every analytics bucket,
@@ -108,6 +141,7 @@ const SEED_INVOICES: InvoiceSpec[] = [
     customer_social_handle: '@chidi_styles',
     customer_social_platform: 'instagram',
     item: '2 yards of ankara fabric',
+    stream: 'Instagram',
     amount: 15000,
     status: 'paid',
     method: 'ACCOUNT_TRANSFER',
@@ -120,6 +154,7 @@ const SEED_INVOICES: InvoiceSpec[] = [
     customer_social_handle: '08031234567',
     customer_social_platform: 'whatsapp',
     item: 'Lace gown (custom sew)',
+    stream: 'Ikeja shop',
     notes: 'Deliver before the weekend',
     amount: 45000,
     status: 'paid',
@@ -131,6 +166,7 @@ const SEED_INVOICES: InvoiceSpec[] = [
     customer_social_handle: '@tunde.wears',
     customer_social_platform: 'instagram',
     item: 'Agbada set (3 pieces)',
+    stream: 'Instagram',
     amount: 85000,
     status: 'paid',
     method: 'ACCOUNT_TRANSFER',
@@ -151,6 +187,7 @@ const SEED_INVOICES: InvoiceSpec[] = [
     customer_social_handle: 'bisi.kollections',
     customer_social_platform: 'facebook',
     item: 'Senator wear (navy)',
+    stream: 'Ikeja shop',
     amount: 32000,
     status: 'paid',
     method: 'ACCOUNT_TRANSFER',
@@ -161,6 +198,7 @@ const SEED_INVOICES: InvoiceSpec[] = [
     customer_name: 'Yusuf Ibrahim',
     customer_email: 'yusuf.ibrahim@example.com',
     item: 'Kaftan gift set',
+    stream: 'Ikeja shop',
     amount: 120000,
     status: 'paid',
     method: 'CARD',
@@ -172,6 +210,7 @@ const SEED_INVOICES: InvoiceSpec[] = [
     customer_social_handle: '@chinwe_styles',
     customer_social_platform: 'instagram',
     item: 'Adire two-piece',
+    stream: 'Instagram',
     amount: 12500,
     status: 'paid',
     method: 'ACCOUNT_TRANSFER',
@@ -193,6 +232,7 @@ const SEED_INVOICES: InvoiceSpec[] = [
     customer_name: 'Emeka Nwosu',
     customer_phone: '08055512345',
     item: 'Vintage denim jacket',
+    stream: 'Ikeja shop',
     amount: 18000,
     status: 'pending',
     daysAgo: 1,
@@ -225,6 +265,7 @@ interface LinkSpec {
   item: string;
   amount: number | null; // null = buyer enters the amount
   category?: string;
+  stream?: string; // one of SEED_STREAMS' names; omitted = unassigned
   status: 'active' | 'paused' | 'ended';
   collections: LinkCollectionSpec[];
 }
@@ -235,6 +276,7 @@ const SEED_LINKS: LinkSpec[] = [
     item: '6 yards premium ankara',
     amount: 15000,
     category: 'Fabric',
+    stream: 'Instagram',
     status: 'active',
     collections: [
       { customer: 'Ngozi Ade', method: 'ACCOUNT_TRANSFER', daysAgo: 12 },
@@ -259,6 +301,7 @@ const SEED_LINKS: LinkSpec[] = [
     item: 'Eid special (navy senator)',
     amount: 25000,
     category: 'Ready-to-wear',
+    stream: 'Ikeja shop',
     status: 'paused',
     collections: [
       { customer: 'Zainab Musa', method: 'ACCOUNT_TRANSFER', daysAgo: 15 },
@@ -337,6 +380,72 @@ async function ensureCategories(merchantId: string): Promise<Map<string, string>
   return byName;
 }
 
+// Ensure every SEED_STREAMS row exists for the merchant (routed one included)
+// and return a name -> id map. Idempotent like ensureCategories: existing
+// streams are reused, so a re-run adds nothing (and never re-creates the routed
+// stream's sub-account).
+async function ensureStreams(merchantId: string): Promise<Map<string, string>> {
+  const existing = await listStreamsForMerchant(merchantId);
+  const byName = new Map(existing.map((s) => [s.name, s.id]));
+  let created = 0;
+  for (const spec of SEED_STREAMS) {
+    if (byName.has(spec.name)) continue;
+    const stream = await createStream(merchantId, {
+      name: spec.name,
+      settlement_bank_code: spec.settlement?.bank_code,
+      settlement_bank_name: spec.settlement?.bank_name,
+      settlement_account_number: spec.settlement?.account_number,
+      settlement_account_name: spec.settlement?.account_name,
+    });
+    if (spec.archived) {
+      await setStreamStatus(merchantId, stream.id, 'archived');
+    }
+    byName.set(stream.name, stream.id);
+    created += 1;
+  }
+  log(
+    created > 0
+      ? `ensured ${SEED_STREAMS.length} streams (${created} new; "Ikeja shop" routed)`
+      : `${SEED_STREAMS.length} streams already present`,
+  );
+  return byName;
+}
+
+// Assign streams to any already-seeded invoices/links that predate them
+// (matching on item/title), only where still unassigned - the same self-healing
+// shape as backfillInvoiceCategories, so a pre-Phase-13 demo converges.
+async function backfillStreams(
+  merchantId: string,
+  streamIds: Map<string, string>,
+): Promise<void> {
+  let updated = 0;
+  for (const spec of SEED_INVOICES) {
+    if (!spec.stream) continue;
+    const id = streamIds.get(spec.stream);
+    if (!id) continue;
+    const rows = await query(
+      `update invoices set stream_id = $3
+        where merchant_id = $1 and item = $2 and stream_id is null
+        returning id`,
+      [merchantId, spec.item, id],
+    );
+    updated += rows.length;
+  }
+  for (const spec of SEED_LINKS) {
+    if (!spec.stream) continue;
+    const id = streamIds.get(spec.stream);
+    if (!id) continue;
+    const rows = await query(
+      `update payment_links set stream_id = $3
+        where merchant_id = $1 and title = $2 and stream_id is null
+        returning id`,
+      [merchantId, spec.title, id],
+    );
+    updated += rows.length;
+  }
+  if (updated > 0) log(`backfilled streams onto ${updated} existing invoice(s)/link(s)`);
+}
+
 // Assign categories to any already-seeded invoices that predate them (matching
 // on item), only where the invoice is still uncategorised. Keeps a re-run of the
 // seed self-healing: a merchant seeded before Phase 11 converges to the intended
@@ -361,7 +470,10 @@ async function backfillInvoiceCategories(
   if (updated > 0) log(`backfilled categories onto ${updated} existing invoice(s)`);
 }
 
-async function seedInvoices(merchantId: string): Promise<Map<string, string>> {
+async function seedInvoices(
+  merchantId: string,
+  streamIds: Map<string, string>,
+): Promise<Map<string, string>> {
   const categoryIds = await ensureCategories(merchantId);
 
   // Idempotency marker: the first seed item is distinctive enough to tell a
@@ -395,6 +507,7 @@ async function seedInvoices(merchantId: string): Promise<Map<string, string>> {
       amount: spec.amount,
       due_date: dueDate,
       category_id: spec.category ? categoryIds.get(spec.category) : undefined,
+      stream_id: spec.stream ? streamIds.get(spec.stream) : undefined,
     });
 
     const ts = daysAgoIso(spec.daysAgo);
@@ -448,6 +561,7 @@ async function seedInvoices(merchantId: string): Promise<Map<string, string>> {
 async function seedPaymentLinks(
   merchantId: string,
   categoryIds: Map<string, string>,
+  streamIds: Map<string, string>,
 ): Promise<void> {
   // Idempotency marker: the first link's title tells a seeded merchant from a
   // fresh one, so a re-run adds nothing.
@@ -466,6 +580,7 @@ async function seedPaymentLinks(
       item: spec.item,
       amount: spec.amount ?? undefined,
       category_id: spec.category ? categoryIds.get(spec.category) : undefined,
+      stream_id: spec.stream ? streamIds.get(spec.stream) : undefined,
     });
     links += 1;
 
@@ -541,8 +656,12 @@ async function main(): Promise<void> {
   console.log('Seeding Sprout demo data (PRD v2.0 §13)...\n');
 
   const merchant = await ensureDemoMerchant();
-  const categoryIds = await seedInvoices(merchant.id);
-  await seedPaymentLinks(merchant.id, categoryIds);
+  const streamIds = await ensureStreams(merchant.id);
+  const categoryIds = await seedInvoices(merchant.id, streamIds);
+  await seedPaymentLinks(merchant.id, categoryIds, streamIds);
+  // Runs on every seed (not just first creation) so a pre-Phase-13 demo
+  // converges to the intended stream assignments.
+  await backfillStreams(merchant.id, streamIds);
   await seedConnectedAccount(merchant.id);
 
   console.log('\nDone. Demo login:');

@@ -19,6 +19,7 @@ export interface PublicInvoice {
   due_date: string | null;
   status: InvoiceStatus;
   category_id: string | null;
+  stream_id: string | null;
   virtual_account_number: string | null;
   checkout_url: string | null;
   monnify_transaction_reference: string | null;
@@ -32,6 +33,9 @@ export interface PublicInvoice {
   // (kept out of the shared/public column set); undefined elsewhere.
   category_name?: string | null;
   category_color?: string | null;
+  // Only populated by the merchant list/detail queries, which join the stream
+  // (kept out of the shared/public column set); undefined elsewhere.
+  stream_name?: string | null;
 }
 
 export interface PublicPayment {
@@ -48,7 +52,7 @@ export interface PublicPayment {
 }
 
 const INVOICE_COLUMNS =
-  'id, merchant_id, invoice_reference, customer_name, customer_email, customer_phone, customer_social_handle, customer_social_platform, item, notes, amount, currency, due_date, status, category_id, virtual_account_number, checkout_url, monnify_transaction_reference, settlement_path, created_at, updated_at';
+  'id, merchant_id, invoice_reference, customer_name, customer_email, customer_phone, customer_social_handle, customer_social_platform, item, notes, amount, currency, due_date, status, category_id, stream_id, virtual_account_number, checkout_url, monnify_transaction_reference, settlement_path, created_at, updated_at';
 
 const PAYMENT_COLUMNS =
   'id, invoice_id, amount, currency, payment_method, settlement_amount, commission_amount, monnify_transaction_reference, paid_at, created_at';
@@ -67,6 +71,7 @@ export interface NewInvoice {
   currency: string;
   dueDate: string | null;
   categoryId: string | null;
+  streamId: string | null;
   transactionReference: string;
   virtualAccountNumber: string;
   checkoutUrl: string;
@@ -78,9 +83,9 @@ export async function insertInvoice(input: NewInvoice): Promise<PublicInvoice> {
     `insert into invoices
        (merchant_id, invoice_reference, customer_name, customer_email,
         customer_phone, customer_social_handle, customer_social_platform, item, notes,
-        amount, currency, due_date, category_id, status,
+        amount, currency, due_date, category_id, stream_id, status,
         monnify_transaction_reference, virtual_account_number, checkout_url, settlement_path)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'pending', $14, $15, $16, $17)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'pending', $15, $16, $17, $18)
      returning ${INVOICE_COLUMNS}`,
     [
       input.merchantId,
@@ -96,6 +101,7 @@ export async function insertInvoice(input: NewInvoice): Promise<PublicInvoice> {
       input.currency,
       input.dueDate,
       input.categoryId,
+      input.streamId,
       input.transactionReference,
       input.virtualAccountNumber,
       input.checkoutUrl,
@@ -117,9 +123,11 @@ export async function listInvoicesForMerchant(
       .map((c) => `i.${c}`)
       .join(', ')},
             (select max(p.paid_at) from payments p where p.invoice_id = i.id) as paid_at,
-            c.name as category_name, c.color as category_color
+            c.name as category_name, c.color as category_color,
+            s.name as stream_name
        from invoices i
        left join categories c on c.id = i.category_id
+       left join streams s on s.id = i.stream_id
       where i.merchant_id = $1
       order by i.created_at desc`,
     [merchantId],
@@ -134,9 +142,11 @@ export async function findInvoiceForMerchant(
     `select ${INVOICE_COLUMNS.split(', ')
       .map((c) => `i.${c}`)
       .join(', ')},
-            c.name as category_name, c.color as category_color
+            c.name as category_name, c.color as category_color,
+            s.name as stream_name
        from invoices i
        left join categories c on c.id = i.category_id
+       left join streams s on s.id = i.stream_id
       where i.id = $1 and i.merchant_id = $2
       limit 1`,
     [invoiceId, merchantId],

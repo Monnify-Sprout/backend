@@ -6,6 +6,7 @@ import { computeSplit, round2 } from '../../lib/money';
 import { HttpError } from '../../middleware/error';
 import { findMerchantById } from '../auth/auth.repo';
 import { assertOwnedCategory } from '../categories/categories.service';
+import { assertOwnedStream } from '../streams/streams.service';
 
 import { insertInvoice, type PublicInvoice, type SettlementPath } from './invoice.repo';
 import type { CreateInvoiceInput } from './invoice.schema';
@@ -36,6 +37,9 @@ export async function createInvoice(
 
   // If a category was chosen, it must be one of this merchant's own (Phase 11).
   await assertOwnedCategory(merchantId, input.category_id);
+  // Same for a stream (Phase 13) - and a routed stream carries the sub-account
+  // this sale should settle to instead of the merchant's default.
+  const stream = await assertOwnedStream(merchantId, input.stream_id);
 
   const amount = round2(input.amount);
   const { commission, settlement } = computeSplit(amount, env.SPROUT_COMMISSION_PERCENT);
@@ -79,7 +83,9 @@ export async function createInvoice(
     dueDate: input.due_date,
     incomeSplit: splitSupported
       ? {
-          subAccountCode: merchant.sub_account_code,
+          // Money routing (Phase 13): a routed stream settles to its own
+          // sub-account; otherwise the merchant's default.
+          subAccountCode: stream?.sub_account_code ?? merchant.sub_account_code,
           splitPercentage: round2((settlement / amount) * 100),
         }
       : undefined,
@@ -99,6 +105,7 @@ export async function createInvoice(
     currency: 'NGN',
     dueDate: input.due_date ?? null,
     categoryId: input.category_id ?? null,
+    streamId: stream?.id ?? null,
     transactionReference: created.transactionReference,
     virtualAccountNumber: created.virtualAccountNumber,
     checkoutUrl: created.checkoutUrl,

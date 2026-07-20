@@ -256,21 +256,33 @@ export class MonnifyLiveProvider implements MonnifyProvider {
   ): Promise<CreateReservedAccountResult> {
     const cfg = this.config();
     const token = await this.authToken();
+    const body: Record<string, unknown> = {
+      accountReference: input.accountReference,
+      accountName: input.accountName,
+      currencyCode: 'NGN',
+      contractCode: cfg.contractCode,
+      customerEmail: input.customerEmail,
+      customerName: input.customerName,
+      getAllAvailableBanks: false,
+    };
+    // Split path (PRD §7.3) - reserved accounts accept the same
+    // incomeSplitConfig shape as Create Invoice.
+    if (input.incomeSplit) {
+      body.incomeSplitConfig = [
+        {
+          subAccountCode: input.incomeSplit.subAccountCode,
+          splitPercentage: input.incomeSplit.splitPercentage,
+          feeBearer: true,
+        },
+      ];
+    }
     const res = await fetch(`${cfg.baseUrl}/api/v2/bank-transfer/reserved-accounts`, {
       method: 'POST',
       headers: {
         authorization: `Bearer ${token}`,
         'content-type': 'application/json',
       },
-      body: JSON.stringify({
-        accountReference: input.accountReference,
-        accountName: input.accountName,
-        currencyCode: 'NGN',
-        contractCode: cfg.contractCode,
-        customerEmail: input.customerEmail,
-        customerName: input.customerName,
-        getAllAvailableBanks: false,
-      }),
+      body: JSON.stringify(body),
     });
     const json = (await res.json()) as MonnifyEnvelope<ReservedAccountBody>;
     const b = json.responseBody;

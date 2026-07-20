@@ -67,9 +67,13 @@ export class MonnifyMockProvider implements MonnifyProvider {
   createSubAccount(
     input: CreateSubAccountInput,
   ): Promise<CreateSubAccountResult> {
-    // Stable per-merchant code so re-runs are idempotent in appearance.
+    // Stable per-destination code so re-runs are idempotent in appearance. The
+    // settlement account joins the hash (Phase 13): a merchant and its routed
+    // streams share an email but settle to different accounts, and each
+    // destination must map to its own sub-account - two callers only collide
+    // when they truly settle to the same place.
     const suffix = createHash('sha1')
-      .update(input.email)
+      .update(`${input.email}|${input.bankCode ?? ''}|${input.accountNumber ?? ''}`)
       .digest('hex')
       .slice(0, 10)
       .toUpperCase();

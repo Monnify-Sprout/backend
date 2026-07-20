@@ -58,6 +58,9 @@ export const createInvoiceSchema = z
       .optional(),
     // Optional merchant category (Phase 11); ownership is checked in the service.
     category_id: z.string().uuid('Invalid category').optional(),
+    // Optional revenue stream (Phase 13); ownership + active status are checked
+    // in the service. A routed stream redirects the settlement split.
+    stream_id: z.string().uuid('Invalid stream').optional(),
   })
   .refine(
     (v) =>

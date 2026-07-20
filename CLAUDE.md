@@ -44,11 +44,12 @@ This gates every merchant's onboarding, not one optional feature.
 
 ## Current phase
 
-Phases 1–8 plus Phase 10 (analytics deepening), Phase 11 (categories) and
-Phase 12 (static payment links) **complete and verified end to end** against the
-live Supabase DB (`npm run smoke` → 114/114). Migrations in `migrations/`
-(`npm run migrate`; Phase 10 added none, Phase 11 added `0007_categories.sql`,
-Phase 12 added `0008_payment_links.sql`).
+Phases 1–8 plus Phase 10 (analytics deepening), Phase 11 (categories), Phase 12
+(static payment links) and Phase 13 (revenue streams) **complete and verified
+end to end** against the live Supabase DB (`npm run smoke` → 133/133).
+Migrations in `migrations/` (`npm run migrate`; Phase 10 added none, Phase 11
+added `0007_categories.sql`, Phase 12 added `0008_payment_links.sql`, Phase 13
+added `0009_streams.sql`).
 
 Endpoints (all DB access via `pg`):
 - `POST /api/auth/register`, `POST /api/auth/login`, protected `GET /api/me`
@@ -72,6 +73,31 @@ Endpoints (all DB access via `pg`):
   carry an optional `category_id` (Phase 11) - validated to belong to the
   merchant at create time; the list/detail queries join the category to expose
   `category_name`/`category_color` (kept out of INVOICE_COLUMNS + the public subset).
+- protected `GET/POST /api/streams`, `PATCH /api/streams/:id`,
+  `PATCH /api/streams/:id/status`, `DELETE /api/streams/:id` (Phase 13;
+  `src/modules/streams/`) - "revenue streams", the merchant's own subdivisions of
+  their activity (a shop branch, a market stall, the Instagram page, a sales rep,
+  a pop-up, a second brand): WHERE a sale came from, vs categories' WHAT was
+  sold. Named "streams" deliberately - "sub-account" already means the Monnify
+  sub-account for the merchant, and "branch" implies only the physical case. A
+  stream is tracking-only (a label) until a settlement bank account is attached,
+  which makes it ROUTED: the service creates the stream its OWN Monnify
+  sub-account (`provider.createSubAccount`; gated on the merchant being Active),
+  and on the split path invoices/links assigned to it settle THERE instead of to
+  the merchant's default account (the mock provider hashes email+bank+account so
+  distinct destinations get distinct codes). Names unique per merchant
+  case-insensitively (409). Lifecycle: active <-> archived (reversible; archived
+  streams reject new assignments with 422 but keep history); DELETE only when no
+  invoice/link references it (409 otherwise). PATCH can rename, attach/replace
+  the settlement account (new sub-account), or `clear_settlement` back to
+  tracking-only. The list carries per-stream rollups (invoice_count, link_count,
+  total_collected across BOTH products, last_paid_at). Invoices and payment
+  links accept an optional ownership-checked `stream_id` (FK ON DELETE SET
+  NULL), joined back as `stream_name` on merchant list/detail (kept out of
+  INVOICE_COLUMNS and all public subsets). Analytics gained a merchant-only
+  `by_stream` breakdown (invoices + link collections, "Unassigned" bucket; null
+  for a connected account). `CreateReservedAccountInput` gained an optional
+  `incomeSplit` so a routed link's reserved account can carry the split config.
 - protected `GET/POST /api/categories`, `PATCH/DELETE /api/categories/:id`
   (Phase 11; `src/modules/categories/`) - merchant-owned name + `#rrggbb` colour,
   case-insensitively unique per merchant (409 on a duplicate). The list carries a
@@ -182,5 +208,13 @@ The seed adds 4 demo links (fixed + buyer-entered; active/paused/ended) with 10
 backdated collections; a mock-only `simulate-collection` action drives the real
 webhook path. Smoke -> 114/114.
 
-Next: nothing outstanding on the backend for the hackathon path. Merchant branches
-(Phase 13) is the remaining optional roadmap follow-up.
+Phase 13 (revenue streams) **complete** (2026-07-20): tracking + money routing
+(DECIDED: name "streams", scope "money routing too"). See the `/api/streams`
+bullet above. Migration `0009_streams.sql`; the seed adds 3 demo streams
+("Ikeja shop" ROUTED to its own Access Bank account, "Instagram" tracking-only,
+"Eid pop-up" archived), assigns them across seed invoices/links, and BACKFILLS
+stream assignments onto already-seeded data by item/title match. Smoke ->
+133/133.
+
+Next: nothing outstanding on the backend - the full roadmap through Phase 13 is
+built.

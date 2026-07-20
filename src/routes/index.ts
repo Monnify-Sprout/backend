@@ -11,6 +11,7 @@ import { invoiceRouter } from '../modules/invoices/invoice.routes';
 import { publicInvoiceRouter } from '../modules/invoices/public.routes';
 import { paymentLinkRouter } from '../modules/payment-links/payment-links.routes';
 import { publicPaymentLinkRouter } from '../modules/payment-links/public.routes';
+import { streamRouter } from '../modules/streams/streams.routes';
 import { verificationRouter } from '../modules/verification/verification.routes';
 import { webhookRouter } from '../modules/webhooks/webhook.routes';
 
@@ -21,6 +22,7 @@ apiRouter.use('/verification', verificationRouter);
 apiRouter.use('/invoices', invoiceRouter);
 apiRouter.use('/payment-links', paymentLinkRouter);
 apiRouter.use('/categories', categoryRouter);
+apiRouter.use('/streams', streamRouter);
 apiRouter.use('/public', publicInvoiceRouter); // unauthenticated, safe subset
 apiRouter.use('/public', publicPaymentLinkRouter); // unauthenticated, safe subset
 apiRouter.use('/webhooks', webhookRouter);

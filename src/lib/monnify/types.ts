@@ -67,6 +67,9 @@ export interface CreateReservedAccountInput {
   accountName: string; // shown on the buyer's transfer (e.g. the link title)
   customerName: string;
   customerEmail: string;
+  // Present only on the 'split' settlement path (PRD §7.3). Phase 13: routes a
+  // link's collections to a stream's own sub-account instead of the merchant's.
+  incomeSplit?: IncomeSplit;
 }
 
 export interface CreateReservedAccountResult {

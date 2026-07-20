@@ -1,10 +1,13 @@
 import { randomBytes } from 'node:crypto';
 
+import { env } from '../../config/env';
 import { getMonnifyProvider } from '../../lib/monnify';
 import { MonnifyMockProvider } from '../../lib/monnify/mock';
+import { round2 } from '../../lib/money';
 import { HttpError } from '../../middleware/error';
 import { findMerchantById } from '../auth/auth.repo';
 import { assertOwnedCategory } from '../categories/categories.service';
+import { assertOwnedStream } from '../streams/streams.service';
 import {
   processMonnifyWebhook,
   type WebhookOutcome,
@@ -73,6 +76,8 @@ export async function createPaymentLink(
   }
 
   await assertOwnedCategory(merchantId, input.category_id);
+  // Same for a stream (Phase 13) - a routed one redirects the settlement split.
+  const stream = await assertOwnedStream(merchantId, input.stream_id);
 
   const slug = await uniqueSlug(input.title);
   const accountReference = `RSVL-${Date.now().toString(36).toUpperCase()}-${randomBytes(3)
@@ -85,6 +90,16 @@ export async function createPaymentLink(
     accountName: input.title.slice(0, 100),
     customerName: merchant.business_name,
     customerEmail: merchant.email,
+    // Split path (PRD §7.3). A link has no single expected amount (it may be
+    // buyer-entered), so the percentage is simply everything minus Sprout's
+    // commission; the destination is the routed stream's sub-account when one
+    // was chosen, else the merchant's own.
+    incomeSplit: env.MONNIFY_INVOICE_SPLIT_SUPPORTED
+      ? {
+          subAccountCode: stream?.sub_account_code ?? merchant.sub_account_code,
+          splitPercentage: round2(100 - env.SPROUT_COMMISSION_PERCENT),
+        }
+      : undefined,
   });
 
   return insertPaymentLink({
@@ -95,6 +110,7 @@ export async function createPaymentLink(
     amount: input.amount ?? null,
     currency: 'NGN',
     categoryId: input.category_id ?? null,
+    streamId: stream?.id ?? null,
     reservedAccountReference: reserved.accountReference,
     reservedAccountNumber: reserved.reservedAccountNumber,
     reservedAccountBankName: reserved.bankName ?? null,

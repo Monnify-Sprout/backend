@@ -48,6 +48,24 @@ interface InvoiceView {
   category_id?: string | null;
   category_name?: string | null;
   category_color?: string | null;
+  stream_id?: string | null;
+  stream_name?: string | null;
+}
+interface StreamView {
+  id?: string;
+  name?: string;
+  status?: string;
+  sub_account_code?: string | null;
+  settlement_account_number?: string | null;
+  invoice_count?: number;
+  link_count?: number;
+  total_collected?: number;
+}
+interface StreamResponse {
+  stream?: StreamView;
+}
+interface StreamListResponse {
+  streams?: StreamView[];
 }
 interface CategoryView {
   id?: string;
@@ -113,6 +131,7 @@ interface AnalyticsResponse {
   top_items?: unknown[] | null;
   by_category?: Array<{ category?: string; color?: string | null }> | null;
   by_link?: Array<{ link?: string }> | null;
+  by_stream?: Array<{ stream?: string }> | null;
   funnel?: Record<string, unknown> | null;
   [key: string]: unknown;
 }
@@ -124,6 +143,8 @@ interface PaymentLinkView {
   amount?: string | null;
   status?: string;
   category_name?: string | null;
+  stream_id?: string | null;
+  stream_name?: string | null;
   reserved_account_reference?: string | null;
   reserved_account_number?: string | null;
   reserved_account_bank_name?: string | null;
@@ -1225,6 +1246,232 @@ async function main(): Promise<void> {
     'connected scope nulls the by_link breakdown',
     connectedAnalytics.by_link === null || connectedAnalytics.by_link === undefined,
     connectedAnalytics.by_link,
+  );
+
+  // ── Phase 13: revenue streams (tracking + money routing) ───────────────────
+
+  // 37. A tracking-only stream is just a label; a routed one (own settlement
+  // account) gets its OWN sub-account, distinct from the merchant's.
+  const trackingStream = await readBody<StreamResponse>(
+    await fetch(`${BASE}/api/streams`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({ name: 'Market stall' }),
+    }),
+  );
+  check(
+    'tracking-only stream has no sub-account',
+    Boolean(trackingStream.stream?.id) && trackingStream.stream?.sub_account_code === null,
+    trackingStream.stream,
+  );
+  const trackingStreamId = trackingStream.stream?.id ?? '';
+
+  const routedStream = await readBody<StreamResponse>(
+    await fetch(`${BASE}/api/streams`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        name: 'Lekki shop',
+        settlement_bank_code: '044',
+        settlement_bank_name: 'Access Bank',
+        settlement_account_number: '1112223334',
+        settlement_account_name: 'Lekki Branch',
+      }),
+    }),
+  );
+  const routedStreamId = routedStream.stream?.id ?? '';
+  check(
+    "routed stream has its own sub-account (not the merchant's)",
+    typeof routedStream.stream?.sub_account_code === 'string' &&
+      routedStream.stream.sub_account_code.length > 0 &&
+      routedStream.stream.sub_account_code !== verifyOkBody.merchant?.sub_account_code,
+    routedStream.stream?.sub_account_code,
+  );
+
+  // 38. Validation: duplicate names (case-insensitive) and a half-supplied
+  // settlement account are both rejected.
+  const dupStream = await fetch(`${BASE}/api/streams`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ name: 'market STALL' }),
+  });
+  check('duplicate stream name is rejected (409)', dupStream.status === 409, dupStream.status);
+  const halfStream = await fetch(`${BASE}/api/streams`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ name: 'Half routed', settlement_bank_code: '058' }),
+  });
+  check(
+    'settlement account must be complete or absent (422)',
+    halfStream.status === 422,
+    halfStream.status,
+  );
+
+  // 39. An invoice can be tagged with a stream; detail joins the name back.
+  const streamInv = await readBody<InvoiceCreateResponse>(
+    await fetch(`${BASE}/api/invoices`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        customer_name: 'Streamed Buyer',
+        item: 'Streamed order',
+        amount: 9000,
+        stream_id: routedStreamId,
+      }),
+    }),
+  );
+  check(
+    'invoice carries its stream_id',
+    streamInv.invoice?.stream_id === routedStreamId,
+    streamInv.invoice?.stream_id,
+  );
+  const streamInvDetail = await readBody<InvoiceDetailResponse>(
+    await fetch(`${BASE}/api/invoices/${streamInv.invoice?.id}`, {
+      headers: { authorization: `Bearer ${token}` },
+    }),
+  );
+  check(
+    'invoice detail joins the stream name',
+    streamInvDetail.invoice?.stream_name === 'Lekki shop',
+    streamInvDetail.invoice?.stream_name,
+  );
+  const unknownStreamInv = await fetch(`${BASE}/api/invoices`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({
+      customer_name: 'X',
+      item: 'X',
+      amount: 100,
+      stream_id: '00000000-0000-4000-8000-000000000000',
+    }),
+  });
+  check('an unknown stream is rejected (422)', unknownStreamInv.status === 422, unknownStreamInv.status);
+
+  // 40. Archived streams keep history but cannot take new work.
+  const archived = await readBody<StreamResponse>(
+    await fetch(`${BASE}/api/streams/${trackingStreamId}/status`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({ status: 'archived' }),
+    }),
+  );
+  check('stream can be archived', archived.stream?.status === 'archived', archived.stream?.status);
+  const archivedInv = await fetch(`${BASE}/api/invoices`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({
+      customer_name: 'X',
+      item: 'X',
+      amount: 100,
+      stream_id: trackingStreamId,
+    }),
+  });
+  check('an archived stream cannot be assigned (422)', archivedInv.status === 422, archivedInv.status);
+
+  // 41. A link can be tagged too, and a collection through it lands in the
+  // stream's analytics bucket.
+  const streamLink = await readBody<PaymentLinkCreateResponse>(
+    await fetch(`${BASE}/api/payment-links`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        title: `Streamed link ${stamp}`,
+        amount: 2500,
+        stream_id: routedStreamId,
+      }),
+    }),
+  );
+  check(
+    'payment link carries its stream_id',
+    streamLink.link?.stream_id === routedStreamId,
+    streamLink.link?.stream_id,
+  );
+  const streamCollect = await readBody<SimulateResponse>(
+    await fetch(`${BASE}/api/payment-links/${streamLink.link?.id}/simulate-collection`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({}),
+    }),
+  );
+  check(
+    'collection on a streamed link is processed',
+    streamCollect.outcome === 'processed',
+    streamCollect.outcome,
+  );
+
+  // 42. The list rollups count both products per stream.
+  const streamList = await readBody<StreamListResponse>(
+    await fetch(`${BASE}/api/streams`, {
+      headers: { authorization: `Bearer ${token}` },
+    }),
+  );
+  const routedRow = streamList.streams?.find((s) => s.id === routedStreamId);
+  check(
+    'stream rollups count its invoices, links, and collections',
+    routedRow?.invoice_count === 1 &&
+      routedRow?.link_count === 1 &&
+      (routedRow?.total_collected ?? 0) >= 2500,
+    routedRow,
+  );
+
+  // 43. Deletion is only for unused streams; in-use ones must be archived.
+  const delInUse = await fetch(`${BASE}/api/streams/${routedStreamId}`, {
+    method: 'DELETE',
+    headers: { authorization: `Bearer ${token}` },
+  });
+  check('a stream in use cannot be deleted (409)', delInUse.status === 409, delInUse.status);
+  const delUnused = await fetch(`${BASE}/api/streams/${trackingStreamId}`, {
+    method: 'DELETE',
+    headers: { authorization: `Bearer ${token}` },
+  });
+  check('an unused stream can be deleted (200)', delUnused.status === 200, delUnused.status);
+
+  // 44. Ownership: another merchant can neither change nor delete this stream.
+  const foreignStreamPatch = await fetch(`${BASE}/api/streams/${routedStreamId}/status`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token2}` },
+    body: JSON.stringify({ status: 'archived' }),
+  });
+  check("another merchant can't change this stream (404)", foreignStreamPatch.status === 404, foreignStreamPatch.status);
+  const foreignStreamDel = await fetch(`${BASE}/api/streams/${routedStreamId}`, {
+    method: 'DELETE',
+    headers: { authorization: `Bearer ${token2}` },
+  });
+  check("another merchant can't delete this stream (404)", foreignStreamDel.status === 404, foreignStreamDel.status);
+
+  // 45. Analytics: merchant-only by_stream carries the stream (via the link
+  // collection above); the connected scope nulls it.
+  const streamAnalytics = await readBody<AnalyticsResponse>(
+    await fetch(`${BASE}/api/analytics?days=90`, {
+      headers: { authorization: `Bearer ${token}` },
+    }),
+  );
+  check(
+    'merchant analytics carries a by_stream breakdown incl. the stream',
+    Array.isArray(streamAnalytics.by_stream) &&
+      streamAnalytics.by_stream.some((r) => r.stream === 'Lekki shop'),
+    streamAnalytics.by_stream,
+  );
+  check(
+    'connected scope nulls the by_stream breakdown',
+    connectedAnalytics.by_stream === null || connectedAnalytics.by_stream === undefined,
+    connectedAnalytics.by_stream,
+  );
+
+  // 46. Routing is reversible: clearing the settlement account makes the stream
+  // tracking-only again.
+  const cleared = await readBody<StreamResponse>(
+    await fetch(`${BASE}/api/streams/${routedStreamId}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({ clear_settlement: true }),
+    }),
+  );
+  check(
+    'clearing settlement detaches the sub-account (tracking-only again)',
+    cleared.stream?.sub_account_code === null &&
+      cleared.stream?.settlement_account_number === null,
+    cleared.stream,
   );
 
   console.log(`\n${passed} passed, ${failed} failed`);

@@ -49,6 +49,11 @@ export interface AnalyticsResult {
   // Merchant-only sales-by-payment-link (Phase 12). Each row is one static
   // link's collections in the window. Null for a connected account.
   by_link: Array<{ link: string } & Bucket> | null;
+  // Merchant-only sales-by-stream (Phase 13): where (or through whom) each sale
+  // came from - a branch, a stall, the Instagram page, a rep. Covers BOTH
+  // invoices and link collections; unassigned rows collapse into an
+  // "Unassigned" bucket. Null for a connected account, which has no streams.
+  by_stream: Array<{ stream: string } & Bucket> | null;
   // Merchant-only invoice funnel: connected accounts expose settled money only,
   // with no invoice lifecycle to measure conversion against.
   funnel: {
@@ -87,11 +92,13 @@ const MERCHANT_BASE = `
          null::text as link,
          c.name as category,
          c.color as category_color,
+         st.name as stream,
          coalesce(p.settlement_amount, p.amount)::float8 as settlement,
          coalesce(p.commission_amount, 0)::float8 as commission
     from payments p
     join invoices i on i.id = p.invoice_id
     left join categories c on c.id = i.category_id
+    left join streams st on st.id = i.stream_id
    where i.merchant_id = $1 and p.paid_at is not null
   union all
   select lp.paid_at as ts,
@@ -102,11 +109,13 @@ const MERCHANT_BASE = `
          pl.title as link,
          plc.name as category,
          plc.color as category_color,
+         plst.name as stream,
          coalesce(lp.settlement_amount, lp.amount)::float8 as settlement,
          coalesce(lp.commission_amount, 0)::float8 as commission
     from link_payments lp
     join payment_links pl on pl.id = lp.payment_link_id
     left join categories plc on plc.id = pl.category_id
+    left join streams plst on plst.id = pl.stream_id
    where pl.merchant_id = $1 and lp.paid_at is not null`;
 
 const CONNECTED_BASE = `
@@ -118,6 +127,7 @@ const CONNECTED_BASE = `
          null::text as link,
          null::text as category,
          null::text as category_color,
+         null::text as stream,
          t.amount::float8 as settlement,
          0::float8 as commission
     from external_transactions t
@@ -134,6 +144,7 @@ interface AggregateRow {
   top_items: AnalyticsResult['top_items'];
   by_category: AnalyticsResult['by_category'];
   by_link: AnalyticsResult['by_link'];
+  by_stream: AnalyticsResult['by_stream'];
 }
 
 async function aggregate(
@@ -234,7 +245,14 @@ async function aggregate(
           from (select link, count(*)::int as count,
                        sum(amount)::float8 as amount
                   from windowed where link is not null
-                 group by 1 order by sum(amount) desc limit 8) l) as by_link`,
+                 group by 1 order by sum(amount) desc limit 8) l) as by_link,
+       (select json_agg(json_build_object(
+          'stream', st.stream, 'count', st.count, 'amount', st.amount)
+          order by st.amount desc)
+          from (select coalesce(stream, 'Unassigned') as stream,
+                       count(*)::int as count, sum(amount)::float8 as amount
+                  from windowed group by 1 order by sum(amount) desc) st)
+          as by_stream`,
     [scopeId, windowDays],
   );
   return rows[0]!;
@@ -316,6 +334,8 @@ export async function analyticsFor(
     by_category: isMerchant ? (agg.by_category ?? []) : null,
     // Payment links are a merchant-only dimension too.
     by_link: isMerchant ? (agg.by_link ?? []) : null,
+    // Streams are a merchant-only dimension too (Phase 13).
+    by_stream: isMerchant ? (agg.by_stream ?? []) : null,
     funnel,
   };
 }
