@@ -1,0 +1,42 @@
+# Render blueprint for the Sprout backend (Express + TypeScript API).
+# One free web service. Render injects PORT; the app already reads it (config/env.ts)
+# and Express binds every interface, so no host/port changes are needed.
+#
+# To deploy: in the Render dashboard, New > Blueprint, point it at this repo. Render
+# reads this file, then prompts for the four secret env vars marked `sync: false`.
+# Copy each from your local backend/.env (they are gitignored and never committed).
+#
+# Keep-alive: a free Render web service sleeps after ~15 min idle (a cold start is
+# ~50s). For the judges, add a free external pinger (e.g. UptimeRobot) hitting
+# https://<your-service>.onrender.com/health every 5 minutes so it stays warm.
+services:
+  - type: web
+    name: sprout-backend
+    runtime: node
+    plan: free
+    region: frankfurt # closest to the eu-west-1 Supabase project
+    # NODE_ENV=production (below) makes `npm ci` skip devDependencies, but the
+    # build needs TypeScript, so force them in for the build step only.
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Mock mode is the demo plan (Monnify BVN/NIN verification is Live-Mode only).
+      # This is what powers the "Simulate a payment" buttons for the judges.
+      - key: MONNIFY_VERIFICATION_MODE
+        value: mock
+      - key: SPROUT_COMMISSION_PERCENT
+        value: "1"
+      - key: MONNIFY_INVOICE_SPLIT_SUPPORTED
+        value: "false"
+      # Secrets: set these in the dashboard, copied from your local backend/.env.
+      - key: SUPABASE_DB_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: MONNIFY_WEBHOOK_SECRET
+        sync: false
+      - key: CREDENTIALS_ENCRYPTION_KEY
+        sync: false

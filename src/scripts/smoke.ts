@@ -726,6 +726,40 @@ async function main(): Promise<void> {
   );
   check('invoice still paid after replay', afterReplay.invoice?.status === 'paid', afterReplay.invoice?.status);
 
+  // 16a2. The mock-only "Simulate a payment" invoice action drives the real
+  // webhook path, so a fresh pending invoice flips to paid with a settlement
+  // recorded, and a second call is a no-op (the invoice is already paid).
+  const simInv = await readBody<InvoiceCreateResponse>(
+    await fetch(`${BASE}/api/invoices`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({ customer_name: 'Sim Buyer', item: 'Simulated order', amount: 4200 }),
+    }),
+  );
+  const simInvId = simInv.invoice?.id ?? '';
+  const simPay = await fetch(`${BASE}/api/invoices/${simInvId}/simulate-payment`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${token}` },
+  });
+  const simPayBody = await readBody<WebhookAck>(simPay);
+  check('simulate-payment returns 201', simPay.status === 201, simPay.status);
+  check('simulate-payment outcome is "processed"', simPayBody.outcome === 'processed', simPayBody.outcome);
+  const simPaidInv = await readBody<InvoiceDetailResponse>(
+    await fetch(`${BASE}/api/invoices/${simInvId}`, {
+      headers: { authorization: `Bearer ${token}` },
+    }),
+  );
+  check(
+    'simulated invoice is paid with a settlement recorded',
+    simPaidInv.invoice?.status === 'paid' && simPaidInv.payment?.settlement_amount != null,
+    simPaidInv.payment,
+  );
+  const simReplay = await fetch(`${BASE}/api/invoices/${simInvId}/simulate-payment`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${token}` },
+  });
+  check('simulating a paid invoice again is rejected (409)', simReplay.status === 409, simReplay.status);
+
   // 16b. Public lookup of a PAID invoice: terminal state, channels withheld,
   // minimal payment info shown, settlement/commission stay private.
   const pubPaid = await fetch(

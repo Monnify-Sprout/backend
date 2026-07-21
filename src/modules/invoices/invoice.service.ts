@@ -2,13 +2,20 @@ import { randomBytes } from 'node:crypto';
 
 import { env } from '../../config/env';
 import { getMonnifyProvider } from '../../lib/monnify';
+import { MonnifyMockProvider } from '../../lib/monnify/mock';
 import { computeSplit, round2 } from '../../lib/money';
 import { HttpError } from '../../middleware/error';
 import { findMerchantById } from '../auth/auth.repo';
 import { assertOwnedCategory } from '../categories/categories.service';
 import { assertOwnedStream } from '../streams/streams.service';
+import { processMonnifyWebhook, type WebhookOutcome } from '../webhooks/webhook.service';
 
-import { insertInvoice, type PublicInvoice, type SettlementPath } from './invoice.repo';
+import {
+  findInvoiceForMerchant,
+  insertInvoice,
+  type PublicInvoice,
+  type SettlementPath,
+} from './invoice.repo';
 import type { CreateInvoiceInput } from './invoice.schema';
 
 export interface InvoiceWithSettlement {
@@ -124,5 +131,77 @@ export async function createInvoice(
       commission_amount: commission,
       settlement_amount: settlement,
     },
+  };
+}
+
+export interface SimulateInvoicePaymentResult {
+  outcome: WebhookOutcome;
+  amount: number;
+  // Returned so callers (smoke) can replay the same webhook and prove idempotency.
+  transaction_reference: string;
+  payment_reference: string;
+}
+
+// Demo/testing only (mock mode). Drives the REAL webhook path (verify-before-mark,
+// idempotent, split recorded) so a simulated invoice payment is indistinguishable
+// from a genuine one in the stored data - the invoice's OWN Dynamic Invoice
+// transaction is paid, not a fabricated one. A live payment cannot be faked, so
+// this refuses to run under MONNIFY_VERIFICATION_MODE=live.
+//
+// It re-seeds the mock ledger from the stored invoice BEFORE driving the webhook,
+// so it still works after the backend has restarted (the in-process ledger seeded
+// by createInvoice is gone whenever the process cycled - e.g. a hosted backend
+// that slept between creating the invoice and paying it).
+export async function simulateInvoicePayment(
+  merchantId: string,
+  invoiceId: string,
+): Promise<SimulateInvoicePaymentResult> {
+  const provider = getMonnifyProvider();
+  if (provider.mode !== 'mock' || !(provider instanceof MonnifyMockProvider)) {
+    throw new HttpError(403, 'Simulated payments are only available in mock mode.');
+  }
+
+  const invoice = await findInvoiceForMerchant(merchantId, invoiceId);
+  if (!invoice) {
+    throw new HttpError(404, 'Invoice not found.');
+  }
+  if (invoice.status === 'paid') {
+    throw new HttpError(409, 'This invoice is already paid.');
+  }
+  if (invoice.status !== 'pending') {
+    throw new HttpError(422, `A ${invoice.status} invoice can no longer be paid.`);
+  }
+  const transactionReference = invoice.monnify_transaction_reference;
+  if (!transactionReference) {
+    throw new HttpError(422, 'This invoice has no transaction to pay.');
+  }
+
+  const amount = Number(invoice.amount);
+  provider.registerInvoicePayment({
+    transactionReference,
+    amount,
+    currency: invoice.currency,
+  });
+
+  const paymentReference = `SIM-${Date.now().toString(36).toUpperCase()}-${randomBytes(3)
+    .toString('hex')
+    .toUpperCase()}`;
+
+  const outcome = await processMonnifyWebhook({
+    eventType: 'SUCCESSFUL_TRANSACTION',
+    eventData: {
+      transactionReference,
+      paymentReference,
+      paymentStatus: 'PAID',
+      product: { reference: invoice.invoice_reference ?? undefined },
+      customer: invoice.customer_name ? { name: invoice.customer_name } : undefined,
+    },
+  });
+
+  return {
+    outcome,
+    amount,
+    transaction_reference: transactionReference,
+    payment_reference: paymentReference,
   };
 }

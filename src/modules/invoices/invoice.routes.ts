@@ -12,7 +12,7 @@ import {
   listInvoicesForMerchant,
 } from './invoice.repo';
 import { createInvoiceSchema } from './invoice.schema';
-import { createInvoice } from './invoice.service';
+import { createInvoice, simulateInvoicePayment } from './invoice.service';
 
 export const invoiceRouter = Router();
 
@@ -63,6 +63,22 @@ invoiceRouter.get('/:id', async (req, res, next) => {
     }
     const payment = await findPaymentForInvoice(invoice.id);
     res.json({ invoice, payment });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/invoices/:id/simulate-payment - demo/testing only (mock mode). Pays
+// this invoice via the real webhook path so judges can complete the flow without
+// firing a signed webhook by hand. Refuses under live mode.
+invoiceRouter.post('/:id/simulate-payment', async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    if (!id) {
+      throw new HttpError(400, 'Invalid invoice id.');
+    }
+    const result = await simulateInvoicePayment(req.merchant!.id, id);
+    res.status(201).json(result);
   } catch (err) {
     next(err);
   }

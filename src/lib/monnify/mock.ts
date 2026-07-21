@@ -137,6 +137,23 @@ export class MonnifyMockProvider implements MonnifyProvider {
     });
   }
 
+  // Mock-only: re-seed the ledger for an EXISTING invoice's transaction. Same
+  // shape as registerReservedAccountPayment, kept distinct for readability. The
+  // "Simulate a payment" demo action calls this from the stored invoice before
+  // driving the webhook, so a simulated payment still confirms after the process
+  // restarted (a hosted backend that slept between createInvoice and paying would
+  // otherwise have lost the in-process ledger entry and report `not_paid`).
+  registerInvoicePayment(input: {
+    transactionReference: string;
+    amount: number;
+    currency: string;
+  }): void {
+    this.ledger.set(input.transactionReference, {
+      amount: input.amount,
+      currency: input.currency,
+    });
+  }
+
   verifyTransaction(
     transactionReference: string,
   ): Promise<VerifyTransactionResult> {
