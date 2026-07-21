@@ -103,7 +103,7 @@ export async function createStream(
   if (existing >= MAX_STREAMS) {
     throw new HttpError(
       409,
-      `You can have up to ${MAX_STREAMS} streams. Archive or delete one to add another.`,
+      `You can have up to ${MAX_STREAMS} streams. Delete one to add another.`,
     );
   }
 
