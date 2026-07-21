@@ -5,3 +5,7 @@ dist/
 !.env.example
 *.log
 .DS_Store
+
+# ai assistant context
+CLAUDE.md
+AGENTS.md
