@@ -15,9 +15,8 @@ export const createPaymentLinkSchema = z.object({
     .max(1_000_000_000)
     .optional(),
   category_id: z.string().uuid('Invalid category').optional(),
-  // Optional revenue stream (Phase 13); ownership + active status are checked
-  // in the service. A routed stream redirects the settlement split.
-  stream_id: z.string().uuid('Invalid stream').optional(),
+  // Phase 14: the stream is no longer chosen on the form - a new link is
+  // auto-assigned to the current workspace stream (the request scope).
 });
 
 export type CreatePaymentLinkInput = z.infer<typeof createPaymentLinkSchema>;

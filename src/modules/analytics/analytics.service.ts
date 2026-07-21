@@ -79,7 +79,15 @@ export interface AnalyticsResult {
 // null for an invoice) that mirrors `item` (the invoice's item, null for a
 // collection), so top_items stays invoice-only and by_link stays link-only while
 // totals/trend/methods/etc. cover both.
-const MERCHANT_BASE = `
+// Phase 14: merchant analytics can be scoped to one workspace stream. When a
+// stream id is bound to $3 the two arms filter to it ("This stream"); with no
+// stream filter it is every stream combined ("All streams", the aggregated view
+// and the exact pre-Phase-14 query). The two filter fragments are '' or the
+// per-arm predicate.
+function merchantBase(streamFiltered: boolean): string {
+  const invoiceFilter = streamFiltered ? ' and i.stream_id = $3' : '';
+  const linkFilter = streamFiltered ? ' and pl.stream_id = $3' : '';
+  return `
   select p.paid_at as ts,
          p.amount::float8 as amount,
          coalesce(p.payment_method, 'UNKNOWN') as method,
@@ -99,7 +107,7 @@ const MERCHANT_BASE = `
     join invoices i on i.id = p.invoice_id
     left join categories c on c.id = i.category_id
     left join streams st on st.id = i.stream_id
-   where i.merchant_id = $1 and p.paid_at is not null
+   where i.merchant_id = $1 and p.paid_at is not null${invoiceFilter}
   union all
   select lp.paid_at as ts,
          lp.amount::float8 as amount,
@@ -116,7 +124,8 @@ const MERCHANT_BASE = `
     join payment_links pl on pl.id = lp.payment_link_id
     left join categories plc on plc.id = pl.category_id
     left join streams plst on plst.id = pl.stream_id
-   where pl.merchant_id = $1 and lp.paid_at is not null`;
+   where pl.merchant_id = $1 and lp.paid_at is not null${linkFilter}`;
+}
 
 const CONNECTED_BASE = `
   select t.transaction_date as ts,
@@ -147,10 +156,11 @@ interface AggregateRow {
   by_stream: AnalyticsResult['by_stream'];
 }
 
+// params[0] = scope id ($1), params[1] = window days ($2), and optionally
+// params[2] = stream id ($3) when the merchant base is stream-filtered.
 async function aggregate(
   baseSql: string,
-  scopeId: string,
-  windowDays: number,
+  params: unknown[],
 ): Promise<AggregateRow> {
   const rows = await query<AggregateRow>(
     `with base as (${baseSql}),
@@ -253,7 +263,7 @@ async function aggregate(
                        count(*)::int as count, sum(amount)::float8 as amount
                   from windowed group by 1 order by sum(amount) desc) st)
           as by_stream`,
-    [scopeId, windowDays],
+    params,
   );
   return rows[0]!;
 }
@@ -264,7 +274,18 @@ async function aggregate(
 async function funnelFor(
   merchantId: string,
   windowDays: number,
+  streamId?: string,
 ): Promise<NonNullable<AnalyticsResult['funnel']>> {
+  // Phase 14: scope the funnel to the current stream when one is given, on both
+  // the outer aggregate and the inner avg-time subquery ($3 in both places).
+  const params: unknown[] = [merchantId, windowDays];
+  let outerFilter = '';
+  let innerFilter = '';
+  if (streamId) {
+    params.push(streamId);
+    outerFilter = ` and stream_id = $${params.length}`;
+    innerFilter = ` and i2.stream_id = $${params.length}`;
+  }
   const rows = await query<{
     funnel: Omit<NonNullable<AnalyticsResult['funnel']>, 'avg_hours_to_payment'>;
     avg_hours_to_payment: number | null;
@@ -298,24 +319,34 @@ async function funnelFor(
           join payments p on p.invoice_id = i2.id
          where i2.merchant_id = $1
            and i2.created_at >= now() - make_interval(days => $2)
-           and i2.status = 'paid' and p.paid_at is not null) as avg_hours_to_payment
+           and i2.status = 'paid' and p.paid_at is not null${innerFilter}) as avg_hours_to_payment
      from invoices
      where merchant_id = $1
-       and created_at >= now() - make_interval(days => $2)`,
-    [merchantId, windowDays],
+       and created_at >= now() - make_interval(days => $2)${outerFilter}`,
+    params,
   );
   const row = rows[0]!;
   return { ...row.funnel, avg_hours_to_payment: row.avg_hours_to_payment };
 }
 
+// Phase 14: `streamId` scopes MERCHANT analytics to one workspace stream ("This
+// stream"). Omitting it aggregates every stream ("All streams" - the exact
+// pre-Phase-14 query). Ignored for a connected account, which has no streams.
 export async function analyticsFor(
   scope: AnalyticsScope,
   windowDays: number,
+  streamId?: string,
 ): Promise<AnalyticsResult> {
   const isMerchant = scope.type === 'merchant';
-  const base = isMerchant ? MERCHANT_BASE : CONNECTED_BASE;
-  const agg = await aggregate(base, scope.id, windowDays);
-  const funnel = isMerchant ? await funnelFor(scope.id, windowDays) : null;
+  const scopedStream = isMerchant ? streamId : undefined;
+  const base = isMerchant ? merchantBase(Boolean(scopedStream)) : CONNECTED_BASE;
+  const params: unknown[] = scopedStream
+    ? [scope.id, windowDays, scopedStream]
+    : [scope.id, windowDays];
+  const agg = await aggregate(base, params);
+  const funnel = isMerchant
+    ? await funnelFor(scope.id, windowDays, scopedStream)
+    : null;
 
   return {
     scope,

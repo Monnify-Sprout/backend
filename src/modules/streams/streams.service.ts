@@ -3,8 +3,11 @@ import { HttpError } from '../../middleware/error';
 import { findMerchantById, isUniqueViolation } from '../auth/auth.repo';
 
 import {
+  countStreams,
   deleteStream as deleteStreamRow,
+  findDefaultStream,
   findStream,
+  insertDefaultStreamIfMissing,
   insertStream,
   listStreamsForMerchant,
   streamUsage,
@@ -16,6 +19,42 @@ import {
 import type { CreateStreamInput, UpdateStreamInput } from './streams.schema';
 
 const DUPLICATE_MESSAGE = 'You already have a stream with that name.';
+
+// A merchant runs a small, deliberate set of streams (a separate operations /
+// settlement account each). Extra streams are for when they genuinely split the
+// business, so the total (default + created, active + archived) is capped.
+export const MAX_STREAMS = 3;
+
+// The default ("<business> - Main") stream every merchant has. Idempotent, so it
+// is safe to call at registration and as a defensive fallback when resolving the
+// request scope. Tracking-only - no Monnify sub-account, no verification needed.
+export async function ensureDefaultStream(
+  merchantId: string,
+): Promise<PublicStream> {
+  const merchant = await findMerchantById(merchantId);
+  if (!merchant) {
+    throw new HttpError(404, 'Merchant not found.');
+  }
+  return insertDefaultStreamIfMissing(merchantId, `${merchant.business_name} - Main`);
+}
+
+// Resolve which stream a request is scoped to (Phase 14). A valid, ACTIVE stream
+// id from the client's `X-Stream-Id` header wins; anything missing, unknown, or
+// archived falls back to the merchant's default, so a stale header never errors
+// the whole app. Never throws for a bad header - it degrades to the default.
+export async function resolveStreamScope(
+  merchantId: string,
+  headerStreamId: string | undefined,
+): Promise<PublicStream> {
+  if (headerStreamId) {
+    const stream = await findStream(merchantId, headerStreamId);
+    if (stream && stream.status === 'active') {
+      return stream;
+    }
+  }
+  const fallback = await findDefaultStream(merchantId);
+  return fallback ?? ensureDefaultStream(merchantId);
+}
 
 export function listStreams(merchantId: string): Promise<PublicStream[]> {
   return listStreamsForMerchant(merchantId);
@@ -58,6 +97,16 @@ export async function createStream(
   merchantId: string,
   input: CreateStreamInput,
 ): Promise<PublicStream> {
+  // Cap the number of streams a merchant can run (Phase 14). The default counts,
+  // so the first two extra streams are the merchant's own additions.
+  const existing = await countStreams(merchantId);
+  if (existing >= MAX_STREAMS) {
+    throw new HttpError(
+      409,
+      `You can have up to ${MAX_STREAMS} streams. Archive or delete one to add another.`,
+    );
+  }
+
   // Tracking-only streams are just labels - any merchant may create them.
   // Routing (a settlement account) additionally needs a sub-account.
   const routed = Boolean(input.settlement_account_number);
@@ -148,6 +197,15 @@ export async function setStreamStatus(
   streamId: string,
   status: StreamStatus,
 ): Promise<PublicStream> {
+  const current = await findStream(merchantId, streamId);
+  if (!current) {
+    throw new HttpError(404, 'Stream not found.');
+  }
+  // The default stream is always active - it is where unassigned activity lands
+  // and the fallback scope for every request, so it can never be archived.
+  if (status === 'archived' && current.is_default) {
+    throw new HttpError(409, 'Your main stream cannot be archived.');
+  }
   const updated = await updateStreamStatus(merchantId, streamId, status);
   if (!updated) {
     throw new HttpError(404, 'Stream not found.');
@@ -164,6 +222,9 @@ export async function deleteStream(
   const stream = await findStream(merchantId, streamId);
   if (!stream) {
     throw new HttpError(404, 'Stream not found.');
+  }
+  if (stream.is_default) {
+    throw new HttpError(409, 'Your main stream cannot be deleted.');
   }
   const usage = await streamUsage(streamId);
   if (usage.invoice_count > 0 || usage.link_count > 0) {

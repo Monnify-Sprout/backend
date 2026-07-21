@@ -22,8 +22,12 @@ export interface InvoiceWithSettlement {
 }
 
 // PRD §7.2 / §7.3 / FR-04, FR-12.
+// Phase 14: `streamId` is the current workspace stream (from the request scope),
+// so a new invoice is auto-assigned to whichever stream the merchant is on - no
+// picker. A routed stream carries the sub-account this sale should settle to.
 export async function createInvoice(
   merchantId: string,
+  streamId: string,
   input: CreateInvoiceInput,
 ): Promise<InvoiceWithSettlement> {
   const merchant = await findMerchantById(merchantId);
@@ -37,9 +41,9 @@ export async function createInvoice(
 
   // If a category was chosen, it must be one of this merchant's own (Phase 11).
   await assertOwnedCategory(merchantId, input.category_id);
-  // Same for a stream (Phase 13) - and a routed stream carries the sub-account
-  // this sale should settle to instead of the merchant's default.
-  const stream = await assertOwnedStream(merchantId, input.stream_id);
+  // The scoped stream must belong to the merchant and be active (Phase 14) - and
+  // a routed stream carries the sub-account this sale should settle to.
+  const stream = await assertOwnedStream(merchantId, streamId);
 
   const amount = round2(input.amount);
   const { commission, settlement } = computeSplit(amount, env.SPROUT_COMMISSION_PERCENT);

@@ -59,8 +59,11 @@ async function uniqueSlug(title: string): Promise<string> {
   return slugify(`${title}-${Date.now().toString(36)}`);
 }
 
+// Phase 14: `streamId` is the current workspace stream (request scope), so a new
+// link is auto-assigned to whichever stream the merchant is on - no picker.
 export async function createPaymentLink(
   merchantId: string,
+  streamId: string,
   input: CreatePaymentLinkInput,
 ): Promise<PublicPaymentLink> {
   const merchant = await findMerchantById(merchantId);
@@ -76,8 +79,9 @@ export async function createPaymentLink(
   }
 
   await assertOwnedCategory(merchantId, input.category_id);
-  // Same for a stream (Phase 13) - a routed one redirects the settlement split.
-  const stream = await assertOwnedStream(merchantId, input.stream_id);
+  // The scoped stream must belong to the merchant and be active (Phase 14) - a
+  // routed one redirects the settlement split.
+  const stream = await assertOwnedStream(merchantId, streamId);
 
   const slug = await uniqueSlug(input.title);
   const accountReference = `RSVL-${Date.now().toString(36).toUpperCase()}-${randomBytes(3)
@@ -125,10 +129,11 @@ export interface PaymentLinksList {
 
 export async function listPaymentLinks(
   merchantId: string,
+  streamId?: string,
 ): Promise<PaymentLinksList> {
   const [links, summary] = await Promise.all([
-    listPaymentLinksForMerchant(merchantId),
-    statusSummaryForMerchant(merchantId),
+    listPaymentLinksForMerchant(merchantId, streamId),
+    statusSummaryForMerchant(merchantId, streamId),
   ]);
   return { links, summary };
 }

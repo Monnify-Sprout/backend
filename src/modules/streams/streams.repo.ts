@@ -19,6 +19,9 @@ export interface PublicStream {
   settlement_account_name: string | null;
   sub_account_code: string | null;
   status: StreamStatus;
+  // Phase 14: the merchant's default ("<business> - Main") workspace. Exactly
+  // one per merchant; it cannot be archived or deleted.
+  is_default: boolean;
   created_at: string;
   updated_at: string;
   // Per-stream rollups; populated by the list query, undefined elsewhere.
@@ -29,7 +32,7 @@ export interface PublicStream {
 }
 
 const STREAM_COLUMNS =
-  'id, merchant_id, name, settlement_bank_code, settlement_bank_name, settlement_account_number, settlement_account_name, sub_account_code, status, created_at, updated_at';
+  'id, merchant_id, name, settlement_bank_code, settlement_bank_name, settlement_account_number, settlement_account_name, sub_account_code, status, is_default, created_at, updated_at';
 
 export interface NewStream {
   merchantId: string;
@@ -95,9 +98,55 @@ export async function listStreamsForMerchant(
                 where pl.stream_id = s.id)) as last_paid_at
        from streams s
       where s.merchant_id = $1
-      order by s.status, lower(s.name)`,
+      order by s.is_default desc, s.status, lower(s.name)`,
     [merchantId],
   );
+}
+
+// The merchant's default ("<business> - Main") stream. Guaranteed to exist for
+// any merchant created after Phase 14 (registration seeds it) and backfilled for
+// everyone by migration 0010. Used to scope requests that carry no stream header.
+export async function findDefaultStream(
+  merchantId: string,
+): Promise<PublicStream | null> {
+  const rows = await query<PublicStream>(
+    `select ${STREAM_COLUMNS} from streams
+      where merchant_id = $1 and is_default limit 1`,
+    [merchantId],
+  );
+  return rows[0] ?? null;
+}
+
+// Idempotent: creates the default stream only if the merchant has none. Returns
+// the default either way. Tracking-only (no settlement account / sub-account),
+// so it needs no Monnify call and no verification.
+export async function insertDefaultStreamIfMissing(
+  merchantId: string,
+  name: string,
+): Promise<PublicStream> {
+  const existing = await findDefaultStream(merchantId);
+  if (existing) {
+    return existing;
+  }
+  const rows = await query<PublicStream>(
+    `insert into streams (merchant_id, name, is_default)
+     values ($1, $2, true)
+     on conflict do nothing
+     returning ${STREAM_COLUMNS}`,
+    [merchantId, name],
+  );
+  // A concurrent insert or a same-named existing stream (unique index) can make
+  // the insert a no-op; re-read so a default is always returned.
+  return rows[0] ?? (await findDefaultStream(merchantId))!;
+}
+
+// How many streams the merchant has (active + archived), for the create cap.
+export async function countStreams(merchantId: string): Promise<number> {
+  const rows = await query<{ count: number }>(
+    `select count(*)::int as count from streams where merchant_id = $1`,
+    [merchantId],
+  );
+  return rows[0]!.count;
 }
 
 export async function findStream(

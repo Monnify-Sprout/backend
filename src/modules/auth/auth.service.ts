@@ -1,6 +1,7 @@
 import { signAccessToken } from '../../lib/jwt';
 import { hashPassword, verifyPassword } from '../../lib/password';
 import { HttpError } from '../../middleware/error';
+import { ensureDefaultStream } from '../streams/streams.service';
 import type { LoginInput, RegisterInput } from './auth.schema';
 import {
   findMerchantByEmail,
@@ -19,13 +20,18 @@ export async function registerMerchant(
   const password_hash = await hashPassword(input.password);
 
   try {
-    return await insertMerchant({
+    const merchant = await insertMerchant({
       business_name: input.business_name,
       owner_name: input.owner_name,
       phone: input.phone,
       email: input.email,
       password_hash,
     });
+    // Phase 14: every merchant onboards onto a default "<business> - Main"
+    // workspace stream. Tracking-only, so no Monnify call and no verification -
+    // with just this one stream the app behaves exactly as it did before streams.
+    await ensureDefaultStream(merchant.id);
+    return merchant;
   } catch (err) {
     if (isUniqueViolation(err)) {
       throw new HttpError(

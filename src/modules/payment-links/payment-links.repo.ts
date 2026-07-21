@@ -119,7 +119,16 @@ export async function insertPaymentLink(
 
 export async function listPaymentLinksForMerchant(
   merchantId: string,
+  streamId?: string,
 ): Promise<PublicPaymentLink[]> {
+  // Phase 14: scoped to the current workspace stream when one is given (the
+  // everyday path); omitting it returns every stream's links (internal callers).
+  const params: unknown[] = [merchantId];
+  let streamFilter = '';
+  if (streamId) {
+    params.push(streamId);
+    streamFilter = ` and p.stream_id = $${params.length}`;
+  }
   return query<PublicPaymentLink>(
     `select ${LINK_COLUMNS.split(', ')
       .map((c) => `p.${c}`)
@@ -130,9 +139,9 @@ export async function listPaymentLinksForMerchant(
        from payment_links p
        left join categories c on c.id = p.category_id
        left join streams s on s.id = p.stream_id
-      where p.merchant_id = $1
+      where p.merchant_id = $1${streamFilter}
       order by p.created_at desc`,
-    [merchantId],
+    params,
   );
 }
 
@@ -174,7 +183,18 @@ export async function updatePaymentLinkStatus(
 
 export async function statusSummaryForMerchant(
   merchantId: string,
+  streamId?: string,
 ): Promise<LinkStatusSummary> {
+  // Phase 14: the status cards on the links page reflect the current workspace
+  // stream. Scope both the link counts and the collected total to it when given.
+  const params: unknown[] = [merchantId];
+  let outerFilter = '';
+  let collectedFilter = '';
+  if (streamId) {
+    params.push(streamId);
+    outerFilter = ` and stream_id = $${params.length}`;
+    collectedFilter = ` and p2.stream_id = $${params.length}`;
+  }
   const rows = await query<LinkStatusSummary>(
     `select
        count(*)::int as total,
@@ -185,10 +205,10 @@ export async function statusSummaryForMerchant(
          (select sum(lp.amount)
             from link_payments lp
             join payment_links p2 on p2.id = lp.payment_link_id
-           where p2.merchant_id = $1), 0)::float8 as total_collected
+           where p2.merchant_id = $1${collectedFilter}), 0)::float8 as total_collected
      from payment_links
-     where merchant_id = $1`,
-    [merchantId],
+     where merchant_id = $1${outerFilter}`,
+    params,
   );
   return rows[0]!;
 }

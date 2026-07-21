@@ -113,11 +113,22 @@ export async function insertInvoice(input: NewInvoice): Promise<PublicInvoice> {
 
 export async function listInvoicesForMerchant(
   merchantId: string,
+  streamId?: string,
 ): Promise<PublicInvoice[]> {
   // paid_at (when the invoice was settled) comes from the joined payment, and
   // the category name/colour from the joined category - the list is where the
   // dashboard needs both (paid column + filters, category chip + filter), so
   // they are added here rather than to the shared INVOICE_COLUMNS.
+  //
+  // Phase 14: the list is scoped to the current workspace stream when one is
+  // given (the everyday path). Omitting it returns every stream's invoices, kept
+  // only for internal callers that need the merchant-wide set.
+  const params: unknown[] = [merchantId];
+  let streamFilter = '';
+  if (streamId) {
+    params.push(streamId);
+    streamFilter = ` and i.stream_id = $${params.length}`;
+  }
   return query<PublicInvoice>(
     `select ${INVOICE_COLUMNS.split(', ')
       .map((c) => `i.${c}`)
@@ -128,9 +139,9 @@ export async function listInvoicesForMerchant(
        from invoices i
        left join categories c on c.id = i.category_id
        left join streams s on s.id = i.stream_id
-      where i.merchant_id = $1
+      where i.merchant_id = $1${streamFilter}
       order by i.created_at desc`,
-    [merchantId],
+    params,
   );
 }
 

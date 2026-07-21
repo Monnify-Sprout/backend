@@ -55,6 +55,7 @@ interface StreamView {
   id?: string;
   name?: string;
   status?: string;
+  is_default?: boolean;
   sub_account_code?: string | null;
   settlement_account_number?: string | null;
   invoice_count?: number;
@@ -95,6 +96,9 @@ interface InvoiceCreateResponse {
 interface InvoiceDetailResponse {
   invoice?: InvoiceView;
   payment?: PaymentView | null;
+}
+interface InvoiceListResponse {
+  invoices?: InvoiceView[];
 }
 interface WebhookAck {
   received?: boolean;
@@ -1266,6 +1270,29 @@ async function main(): Promise<void> {
   );
   const trackingStreamId = trackingStream.stream?.id ?? '';
 
+  // 38. Validation (under the cap): duplicate names (case-insensitive) and a
+  // half-supplied settlement account are both rejected. Tested here while the
+  // merchant is still under the 3-stream cap (default + Market stall = 2).
+  const dupStream = await fetch(`${BASE}/api/streams`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ name: 'market STALL' }),
+  });
+  check('duplicate stream name is rejected (409)', dupStream.status === 409, dupStream.status);
+  const halfStream = await fetch(`${BASE}/api/streams`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ name: 'Half routed', settlement_bank_code: '058' }),
+  });
+  check(
+    'settlement account must be complete or absent (422)',
+    halfStream.status === 422,
+    halfStream.status,
+  );
+
+  // A routed stream (own settlement account) gets its OWN sub-account. This is
+  // the merchant's 3rd stream (default + Market stall + Lekki shop), hitting the
+  // cap.
   const routedStream = await readBody<StreamResponse>(
     await fetch(`${BASE}/api/streams`, {
       method: 'POST',
@@ -1288,40 +1315,50 @@ async function main(): Promise<void> {
     routedStream.stream?.sub_account_code,
   );
 
-  // 38. Validation: duplicate names (case-insensitive) and a half-supplied
-  // settlement account are both rejected.
-  const dupStream = await fetch(`${BASE}/api/streams`, {
+  // Phase 14: streams as workspace scope. The merchant is now at the cap of
+  // three, so a 4th stream is rejected.
+  const overflowStream = await fetch(`${BASE}/api/streams`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-    body: JSON.stringify({ name: 'market STALL' }),
+    body: JSON.stringify({ name: 'One too many' }),
   });
-  check('duplicate stream name is rejected (409)', dupStream.status === 409, dupStream.status);
-  const halfStream = await fetch(`${BASE}/api/streams`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-    body: JSON.stringify({ name: 'Half routed', settlement_bank_code: '058' }),
-  });
+  check('a 4th stream is rejected at the 3-cap (409)', overflowStream.status === 409, overflowStream.status);
+
+  // Registration seeded a default "<business> - Main" stream: exactly one stream
+  // is is_default, and it is the fallback scope when no X-Stream-Id is sent.
+  const streamsAfterCreate = await readBody<StreamListResponse>(
+    await fetch(`${BASE}/api/streams`, {
+      headers: { authorization: `Bearer ${token}` },
+    }),
+  );
+  const defaultStream = streamsAfterCreate.streams?.find((s) => s.is_default);
+  const defaultStreamId = defaultStream?.id ?? '';
   check(
-    'settlement account must be complete or absent (422)',
-    halfStream.status === 422,
-    halfStream.status,
+    'registration created exactly one default stream',
+    streamsAfterCreate.streams?.filter((s) => s.is_default).length === 1 &&
+      Boolean(defaultStreamId),
+    streamsAfterCreate.streams?.map((s) => ({ name: s.name, is_default: s.is_default })),
   );
 
-  // 39. An invoice can be tagged with a stream; detail joins the name back.
+  // 39. Auto-assign (Phase 14): a new invoice belongs to whichever stream the
+  // request is scoped to via the X-Stream-Id header - no stream_id in the body.
   const streamInv = await readBody<InvoiceCreateResponse>(
     await fetch(`${BASE}/api/invoices`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${token}`,
+        'x-stream-id': routedStreamId,
+      },
       body: JSON.stringify({
         customer_name: 'Streamed Buyer',
         item: 'Streamed order',
         amount: 9000,
-        stream_id: routedStreamId,
       }),
     }),
   );
   check(
-    'invoice carries its stream_id',
+    'invoice is auto-assigned to the current workspace stream',
     streamInv.invoice?.stream_id === routedStreamId,
     streamInv.invoice?.stream_id,
   );
@@ -1335,19 +1372,31 @@ async function main(): Promise<void> {
     streamInvDetail.invoice?.stream_name === 'Lekki shop',
     streamInvDetail.invoice?.stream_name,
   );
-  const unknownStreamInv = await fetch(`${BASE}/api/invoices`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-    body: JSON.stringify({
-      customer_name: 'X',
-      item: 'X',
-      amount: 100,
-      stream_id: '00000000-0000-4000-8000-000000000000',
-    }),
-  });
-  check('an unknown stream is rejected (422)', unknownStreamInv.status === 422, unknownStreamInv.status);
 
-  // 40. Archived streams keep history but cannot take new work.
+  // 39b. The invoice list is scoped to the current stream: the invoice above
+  // shows up on the routed stream but NOT on the default stream.
+  const listOnRouted = await readBody<InvoiceListResponse>(
+    await fetch(`${BASE}/api/invoices`, {
+      headers: { authorization: `Bearer ${token}`, 'x-stream-id': routedStreamId },
+    }),
+  );
+  const listOnDefault = await readBody<InvoiceListResponse>(
+    await fetch(`${BASE}/api/invoices`, {
+      headers: { authorization: `Bearer ${token}`, 'x-stream-id': defaultStreamId },
+    }),
+  );
+  check(
+    'the invoice list is scoped to the current stream',
+    Boolean(listOnRouted.invoices?.some((i) => i.id === streamInv.invoice?.id)) &&
+      !listOnDefault.invoices?.some((i) => i.id === streamInv.invoice?.id),
+    {
+      onRouted: listOnRouted.invoices?.length,
+      onDefault: listOnDefault.invoices?.length,
+    },
+  );
+
+  // 40. You cannot be "on" an archived stream: a stale/archived X-Stream-Id
+  // header falls back to the default scope rather than erroring.
   const archived = await readBody<StreamResponse>(
     await fetch(`${BASE}/api/streams/${trackingStreamId}/status`, {
       method: 'PATCH',
@@ -1356,33 +1405,38 @@ async function main(): Promise<void> {
     }),
   );
   check('stream can be archived', archived.stream?.status === 'archived', archived.stream?.status);
-  const archivedInv = await fetch(`${BASE}/api/invoices`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-    body: JSON.stringify({
-      customer_name: 'X',
-      item: 'X',
-      amount: 100,
-      stream_id: trackingStreamId,
-    }),
-  });
-  check('an archived stream cannot be assigned (422)', archivedInv.status === 422, archivedInv.status);
-
-  // 41. A link can be tagged too, and a collection through it lands in the
-  // stream's analytics bucket.
-  const streamLink = await readBody<PaymentLinkCreateResponse>(
-    await fetch(`${BASE}/api/payment-links`, {
+  const fallbackInv = await readBody<InvoiceCreateResponse>(
+    await fetch(`${BASE}/api/invoices`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-      body: JSON.stringify({
-        title: `Streamed link ${stamp}`,
-        amount: 2500,
-        stream_id: routedStreamId,
-      }),
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${token}`,
+        'x-stream-id': trackingStreamId,
+      },
+      body: JSON.stringify({ customer_name: 'Fallback', item: 'Fallback order', amount: 100 }),
     }),
   );
   check(
-    'payment link carries its stream_id',
+    'an archived X-Stream-Id falls back to the default stream',
+    fallbackInv.invoice?.stream_id === defaultStreamId,
+    fallbackInv.invoice?.stream_id,
+  );
+
+  // 41. A link is auto-assigned to the current stream too, and a collection
+  // through it lands in that stream's analytics bucket.
+  const streamLink = await readBody<PaymentLinkCreateResponse>(
+    await fetch(`${BASE}/api/payment-links`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${token}`,
+        'x-stream-id': routedStreamId,
+      },
+      body: JSON.stringify({ title: `Streamed link ${stamp}`, amount: 2500 }),
+    }),
+  );
+  check(
+    'payment link is auto-assigned to the current stream',
     streamLink.link?.stream_id === routedStreamId,
     streamLink.link?.stream_id,
   );
@@ -1426,6 +1480,19 @@ async function main(): Promise<void> {
   });
   check('an unused stream can be deleted (200)', delUnused.status === 200, delUnused.status);
 
+  // 43b. The default stream is protected: it can be neither archived nor deleted.
+  const archiveDefault = await fetch(`${BASE}/api/streams/${defaultStreamId}/status`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ status: 'archived' }),
+  });
+  check('the default stream cannot be archived (409)', archiveDefault.status === 409, archiveDefault.status);
+  const deleteDefault = await fetch(`${BASE}/api/streams/${defaultStreamId}`, {
+    method: 'DELETE',
+    headers: { authorization: `Bearer ${token}` },
+  });
+  check('the default stream cannot be deleted (409)', deleteDefault.status === 409, deleteDefault.status);
+
   // 44. Ownership: another merchant can neither change nor delete this stream.
   const foreignStreamPatch = await fetch(`${BASE}/api/streams/${routedStreamId}/status`, {
     method: 'PATCH',
@@ -1439,15 +1506,15 @@ async function main(): Promise<void> {
   });
   check("another merchant can't delete this stream (404)", foreignStreamDel.status === 404, foreignStreamDel.status);
 
-  // 45. Analytics: merchant-only by_stream carries the stream (via the link
-  // collection above); the connected scope nulls it.
+  // 45. Analytics: aggregated ("all streams") carries a by_stream breakdown
+  // including the routed stream; the connected scope nulls it.
   const streamAnalytics = await readBody<AnalyticsResponse>(
     await fetch(`${BASE}/api/analytics?days=90`, {
       headers: { authorization: `Bearer ${token}` },
     }),
   );
   check(
-    'merchant analytics carries a by_stream breakdown incl. the stream',
+    'aggregated analytics carries a by_stream breakdown incl. the stream',
     Array.isArray(streamAnalytics.by_stream) &&
       streamAnalytics.by_stream.some((r) => r.stream === 'Lekki shop'),
     streamAnalytics.by_stream,
@@ -1457,6 +1524,40 @@ async function main(): Promise<void> {
     connectedAnalytics.by_stream === null || connectedAnalytics.by_stream === undefined,
     connectedAnalytics.by_stream,
   );
+
+  // 45b. Per-stream analytics: scoping to one stream isolates its money. The
+  // routed stream's only PAID revenue is the 2,500 link collection above (its
+  // 9,000 invoice is still pending), and the default stream excludes it.
+  const routedAnalytics = await readBody<AnalyticsResponse>(
+    await fetch(`${BASE}/api/analytics?days=90&stream_id=${routedStreamId}`, {
+      headers: { authorization: `Bearer ${token}` },
+    }),
+  );
+  check(
+    'per-stream analytics counts only that stream (the 2,500 collection)',
+    Number(routedAnalytics.totals?.gross_amount) === 2500,
+    routedAnalytics.totals?.gross_amount,
+  );
+  // The default stream holds this merchant's earlier paid invoices but NOT the
+  // routed collection, so aggregated == default + routed (every paid row lives
+  // on exactly one of the two remaining streams).
+  const defaultAnalytics = await readBody<AnalyticsResponse>(
+    await fetch(`${BASE}/api/analytics?days=90&stream_id=${defaultStreamId}`, {
+      headers: { authorization: `Bearer ${token}` },
+    }),
+  );
+  const aggGross = Number(streamAnalytics.totals?.gross_amount ?? 0);
+  const defGross = Number(defaultAnalytics.totals?.gross_amount ?? 0);
+  const rtdGross = Number(routedAnalytics.totals?.gross_amount ?? 0);
+  check(
+    'aggregated gross equals the sum of the per-stream grosses',
+    Math.abs(aggGross - (defGross + rtdGross)) < 0.5 && defGross > 0,
+    { aggGross, defGross, rtdGross },
+  );
+  const badStreamAnalytics = await fetch(`${BASE}/api/analytics?stream_id=${'00000000-0000-4000-8000-000000000000'}`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  check('analytics for an unknown stream is 404', badStreamAnalytics.status === 404, badStreamAnalytics.status);
 
   // 46. Routing is reversible: clearing the settlement account makes the stream
   // tracking-only again.

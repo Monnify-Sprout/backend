@@ -3,6 +3,7 @@ import { Router } from 'express';
 import { formatZodError } from '../../lib/validation';
 import { requireAuth } from '../../middleware/auth';
 import { HttpError } from '../../middleware/error';
+import { attachStream } from '../../middleware/stream';
 
 import {
   createPaymentLinkSchema,
@@ -19,13 +20,15 @@ import {
 
 export const paymentLinkRouter = Router();
 
-// All payment-link routes are merchant-scoped (Phase 12).
-paymentLinkRouter.use(requireAuth);
+// All payment-link routes are merchant-scoped (Phase 12); attachStream resolves
+// the current workspace stream (Phase 14) from the X-Stream-Id header.
+paymentLinkRouter.use(requireAuth, attachStream);
 
-// GET /api/payment-links - the merchant's links plus a status-count summary.
+// GET /api/payment-links - the current stream's links plus a status-count
+// summary scoped to that stream.
 paymentLinkRouter.get('/', async (req, res, next) => {
   try {
-    const result = await listPaymentLinks(req.merchant!.id);
+    const result = await listPaymentLinks(req.merchant!.id, req.streamId);
     res.json(result);
   } catch (err) {
     next(err);
@@ -33,13 +36,14 @@ paymentLinkRouter.get('/', async (req, res, next) => {
 });
 
 // POST /api/payment-links - create a reusable link backed by a reserved account.
+// Auto-assigned to the current stream.
 paymentLinkRouter.post('/', async (req, res, next) => {
   try {
     const parsed = createPaymentLinkSchema.safeParse(req.body);
     if (!parsed.success) {
       throw new HttpError(422, 'Validation failed', formatZodError(parsed.error));
     }
-    const link = await createPaymentLink(req.merchant!.id, parsed.data);
+    const link = await createPaymentLink(req.merchant!.id, req.streamId!, parsed.data);
     res.status(201).json({ link });
   } catch (err) {
     next(err);

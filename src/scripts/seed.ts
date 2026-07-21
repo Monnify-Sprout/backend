@@ -18,7 +18,11 @@ import {
   simulateLinkCollection,
 } from '../modules/payment-links/payment-links.service';
 import { listStreamsForMerchant } from '../modules/streams/streams.repo';
-import { createStream, setStreamStatus } from '../modules/streams/streams.service';
+import {
+  createStream,
+  ensureDefaultStream,
+  setStreamStatus,
+} from '../modules/streams/streams.service';
 import { verifyMerchantIdentity } from '../modules/verification/verification.service';
 import { processMonnifyWebhook } from '../modules/webhooks/webhook.service';
 
@@ -84,11 +88,13 @@ const SEED_CATEGORIES: { name: string; color: string }[] = [
   { name: 'Accessories', color: '#f59e0b' },
 ];
 
-// Revenue streams (Phase 13): where each sale came from. "Ikeja shop" is ROUTED
-// (its own settlement account -> its own sub-account, demonstrating money
-// routing); "Instagram" is tracking-only; the archived pop-up shows the archived
-// state on the manager page. Some invoices/links stay unassigned on purpose, to
-// show the "Unassigned" analytics bucket.
+// Revenue streams as the workspace scope (Phase 14). Every merchant onboards
+// onto a default "<business> - Main" stream (created at registration); the demo
+// adds two more to reach the cap of three: "Ikeja shop" is ROUTED (its own
+// settlement account -> its own sub-account, demonstrating money routing), and
+// "Eid pop-up" is archived to show the archived state + the unarchive flow. The
+// merchant's everyday activity lives on Main. Nothing is left unassigned - every
+// invoice/link belongs to exactly one stream.
 interface StreamSpec {
   name: string;
   settlement?: {
@@ -100,6 +106,8 @@ interface StreamSpec {
   archived?: boolean;
 }
 
+// The default "Main" stream is NOT in this list - it is ensured separately and
+// referenced by the key 'Main'. Creating these two puts the demo at the 3 cap.
 const SEED_STREAMS: StreamSpec[] = [
   {
     name: 'Ikeja shop',
@@ -110,7 +118,6 @@ const SEED_STREAMS: StreamSpec[] = [
       account_name: 'Ada Obiora (Ikeja)',
     },
   },
-  { name: 'Instagram' },
   { name: 'Eid pop-up', archived: true },
 ];
 
@@ -128,7 +135,7 @@ interface InvoiceSpec {
   daysAgo: number; // how far back created (and, for paid, settled)
   dueInDays?: number; // due date relative to today (negative = past)
   category?: string; // one of SEED_CATEGORIES' names; omitted = uncategorised
-  stream?: string; // one of SEED_STREAMS' names; omitted = unassigned
+  stream?: string; // stream name ('Ikeja shop') or 'Main'; omitted = Main (the default)
 }
 
 // A realistic Nigerian social-commerce mix: amounts hit every analytics bucket,
@@ -141,7 +148,6 @@ const SEED_INVOICES: InvoiceSpec[] = [
     customer_social_handle: '@chidi_styles',
     customer_social_platform: 'instagram',
     item: '2 yards of ankara fabric',
-    stream: 'Instagram',
     amount: 15000,
     status: 'paid',
     method: 'ACCOUNT_TRANSFER',
@@ -166,7 +172,6 @@ const SEED_INVOICES: InvoiceSpec[] = [
     customer_social_handle: '@tunde.wears',
     customer_social_platform: 'instagram',
     item: 'Agbada set (3 pieces)',
-    stream: 'Instagram',
     amount: 85000,
     status: 'paid',
     method: 'ACCOUNT_TRANSFER',
@@ -210,7 +215,6 @@ const SEED_INVOICES: InvoiceSpec[] = [
     customer_social_handle: '@chinwe_styles',
     customer_social_platform: 'instagram',
     item: 'Adire two-piece',
-    stream: 'Instagram',
     amount: 12500,
     status: 'paid',
     method: 'ACCOUNT_TRANSFER',
@@ -265,7 +269,7 @@ interface LinkSpec {
   item: string;
   amount: number | null; // null = buyer enters the amount
   category?: string;
-  stream?: string; // one of SEED_STREAMS' names; omitted = unassigned
+  stream?: string; // stream name ('Ikeja shop') or 'Main'; omitted = Main (the default)
   status: 'active' | 'paused' | 'ended';
   collections: LinkCollectionSpec[];
 }
@@ -276,7 +280,6 @@ const SEED_LINKS: LinkSpec[] = [
     item: '6 yards premium ankara',
     amount: 15000,
     category: 'Fabric',
-    stream: 'Instagram',
     status: 'active',
     collections: [
       { customer: 'Ngozi Ade', method: 'ACCOUNT_TRANSFER', daysAgo: 12 },
@@ -380,13 +383,44 @@ async function ensureCategories(merchantId: string): Promise<Map<string, string>
   return byName;
 }
 
-// Ensure every SEED_STREAMS row exists for the merchant (routed one included)
-// and return a name -> id map. Idempotent like ensureCategories: existing
-// streams are reused, so a re-run adds nothing (and never re-creates the routed
-// stream's sub-account).
+// Phase 14: a demo seeded before this phase may still have the old tracking-only
+// "Instagram" stream, which would push the merchant over the 3-stream cap once
+// Main exists. Fold its activity into Main and remove it so the demo converges to
+// exactly three streams (Main + Ikeja shop + Eid pop-up).
+async function reconcileLegacyStreams(
+  merchantId: string,
+  defaultStreamId: string,
+): Promise<void> {
+  const existing = await listStreamsForMerchant(merchantId);
+  const legacy = existing.find((s) => s.name === 'Instagram' && !s.is_default);
+  if (!legacy) return;
+  await query(`update invoices set stream_id = $2 where stream_id = $1`, [
+    legacy.id,
+    defaultStreamId,
+  ]);
+  await query(`update payment_links set stream_id = $2 where stream_id = $1`, [
+    legacy.id,
+    defaultStreamId,
+  ]);
+  await query(`delete from streams where id = $1`, [legacy.id]);
+  log('folded legacy "Instagram" stream into Main');
+}
+
+// Ensure the default "Main" stream plus every SEED_STREAMS row exists for the
+// merchant, and return a name -> id map (including the key 'Main'). Idempotent:
+// existing streams are reused, so a re-run adds nothing (and never re-creates the
+// routed stream's sub-account).
 async function ensureStreams(merchantId: string): Promise<Map<string, string>> {
+  // Registration already seeds Main, but the demo merchant predates that path,
+  // so ensure it here too (idempotent).
+  const defaultStream = await ensureDefaultStream(merchantId);
+  await reconcileLegacyStreams(merchantId, defaultStream.id);
+
   const existing = await listStreamsForMerchant(merchantId);
   const byName = new Map(existing.map((s) => [s.name, s.id]));
+  // 'Main' is how invoice/link specs reference the default (or by omitting stream).
+  byName.set('Main', defaultStream.id);
+
   let created = 0;
   for (const spec of SEED_STREAMS) {
     if (byName.has(spec.name)) continue;
@@ -405,8 +439,8 @@ async function ensureStreams(merchantId: string): Promise<Map<string, string>> {
   }
   log(
     created > 0
-      ? `ensured ${SEED_STREAMS.length} streams (${created} new; "Ikeja shop" routed)`
-      : `${SEED_STREAMS.length} streams already present`,
+      ? `ensured Main + ${SEED_STREAMS.length} streams (${created} new; "Ikeja shop" routed)`
+      : `Main + ${SEED_STREAMS.length} streams already present`,
   );
   return byName;
 }
@@ -418,28 +452,34 @@ async function backfillStreams(
   merchantId: string,
   streamIds: Map<string, string>,
 ): Promise<void> {
+  // Everything now belongs to a stream (migration 0010 put stray rows on Main),
+  // so re-route items intended for a NON-default stream off Main/null onto their
+  // target. Rows meant to stay on Main have no `spec.stream` and are skipped.
+  const mainId = streamIds.get('Main');
   let updated = 0;
   for (const spec of SEED_INVOICES) {
-    if (!spec.stream) continue;
+    if (!spec.stream || spec.stream === 'Main') continue;
     const id = streamIds.get(spec.stream);
     if (!id) continue;
     const rows = await query(
       `update invoices set stream_id = $3
-        where merchant_id = $1 and item = $2 and stream_id is null
+        where merchant_id = $1 and item = $2
+          and (stream_id is null or stream_id = $4)
         returning id`,
-      [merchantId, spec.item, id],
+      [merchantId, spec.item, id, mainId],
     );
     updated += rows.length;
   }
   for (const spec of SEED_LINKS) {
-    if (!spec.stream) continue;
+    if (!spec.stream || spec.stream === 'Main') continue;
     const id = streamIds.get(spec.stream);
     if (!id) continue;
     const rows = await query(
       `update payment_links set stream_id = $3
-        where merchant_id = $1 and title = $2 and stream_id is null
+        where merchant_id = $1 and title = $2
+          and (stream_id is null or stream_id = $4)
         returning id`,
-      [merchantId, spec.title, id],
+      [merchantId, spec.title, id, mainId],
     );
     updated += rows.length;
   }
@@ -496,7 +536,10 @@ async function seedInvoices(
   for (const spec of SEED_INVOICES) {
     const dueDate = spec.dueInDays !== undefined ? dateStr(spec.dueInDays) : undefined;
 
-    const { invoice } = await createInvoice(merchantId, {
+    // Phase 14: streams are auto-assigned from the request scope, so the seed
+    // passes the target stream id positionally (Main by default).
+    const streamId = streamIds.get(spec.stream ?? 'Main')!;
+    const { invoice } = await createInvoice(merchantId, streamId, {
       customer_name: spec.customer_name,
       customer_phone: spec.customer_phone,
       customer_email: spec.customer_email,
@@ -507,7 +550,6 @@ async function seedInvoices(
       amount: spec.amount,
       due_date: dueDate,
       category_id: spec.category ? categoryIds.get(spec.category) : undefined,
-      stream_id: spec.stream ? streamIds.get(spec.stream) : undefined,
     });
 
     const ts = daysAgoIso(spec.daysAgo);
@@ -575,12 +617,12 @@ async function seedPaymentLinks(
   let links = 0;
   let collections = 0;
   for (const spec of SEED_LINKS) {
-    const link = await createPaymentLink(merchantId, {
+    const streamId = streamIds.get(spec.stream ?? 'Main')!;
+    const link = await createPaymentLink(merchantId, streamId, {
       title: spec.title,
       item: spec.item,
       amount: spec.amount ?? undefined,
       category_id: spec.category ? categoryIds.get(spec.category) : undefined,
-      stream_id: spec.stream ? streamIds.get(spec.stream) : undefined,
     });
     links += 1;
 
